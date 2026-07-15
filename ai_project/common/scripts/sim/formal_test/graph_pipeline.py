@@ -231,7 +231,8 @@ class GraphPipeline:
 
     def from_rtl(self, rtl_path: str, yosys_script: Optional[str] = None,
                   output_dir: Optional[str] = None,
-                  keep_intermediate: bool = False) -> Dict[str, Data]:
+                  keep_intermediate: bool = False,
+                  design_files: Optional[List[str]] = None) -> Dict[str, Data]:
         """Convert RTL Verilog file to PyG Data via yosys synthesis.
 
         Generates both BLIF and AIG representations, returns both.
@@ -242,6 +243,8 @@ class GraphPipeline:
                           Default: synth_to_aig.tcl from script dir
             output_dir: Directory for intermediate files. Default: temp dir
             keep_intermediate: Keep intermediate .blif/.aig files
+            design_files: Optional list of additional RTL files for multi-file designs.
+                          All files are read together before synthesis.
 
         Returns:
             Dict with keys 'blif' and 'aig', each containing a PyG Data object
@@ -270,9 +273,16 @@ class GraphPipeline:
             p = os.path.normpath(p)
             return f'"{p}"' if ' ' in p else p
 
+        # ---- Build read_verilog commands for multi-file support ----
+        read_lines = [f"read_verilog -sv {_ys_quote(rtl_path)}"]
+        if design_files:
+            for df in design_files:
+                df_abs = os.path.abspath(df)
+                if os.path.isfile(df_abs) and df_abs != rtl_path:
+                    read_lines.append(f"read_verilog -sv {_ys_quote(df_abs)}")
+
         # ---- BLIF synthesis ----
-        ys_lines = [
-            f"read_verilog -sv {_ys_quote(rtl_path)}",
+        ys_lines = read_lines + [
             "hierarchy -check -auto-top",
             "proc; opt",
             "memory; opt",
@@ -308,8 +318,7 @@ class GraphPipeline:
         if result.returncode != 0:
             logger.warning(f"[RTL] {design_name} BLIF synth failed, trying fallback...")
             # Fallback: simpler script
-            ys_lines_fallback = [
-                f"read_verilog -sv {_ys_quote(rtl_path)}",
+            ys_lines_fallback = read_lines + [
                 "hierarchy -check -auto-top",
                 "proc; opt",
                 "memory; opt",
@@ -335,8 +344,7 @@ class GraphPipeline:
         # ---- AIG synthesis (separate pass, uses 'synth' for proper DFF handling) ----
         ys_aig = os.path.abspath(os.path.join(
             output_dir, f"synth_aig_{design_name}.ys"))
-        ys_aig_lines = [
-            f"read_verilog -sv {_ys_quote(rtl_path)}",
+        ys_aig_lines = read_lines + [
             "hierarchy -check -auto-top",
             "synth",
             f"write_aiger -map {_ys_quote(os.path.join(output_dir, 'output_map.txt'))} {_ys_quote(aig_path)}",

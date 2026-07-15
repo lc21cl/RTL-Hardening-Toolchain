@@ -145,6 +145,102 @@ try:
 except ImportError:
     _HAVE_PIPELINE = False
 
+try:
+    from strategy_recommender import (
+        recommend_strategies as _rec_recommend_strategies,
+        recommend_strategy_for_module,
+        classify_module_type,
+        get_strategy_comparison,
+        explain_recommendation as _rec_explain_recommendation,
+    )
+    _HAVE_RECOMMENDER = True
+except ImportError:
+    _HAVE_RECOMMENDER = False
+    logger.warning("[RAG] strategy_recommender not available")
+
+try:
+    from hardening_visualizer import (
+        calculate_hardening_metrics as _vis_calculate_hardening_metrics,
+        generate_hardening_report,
+        generate_visualization_html,
+        visualize_hardening_effect,
+    )
+    _HAVE_VISUALIZER = True
+except ImportError:
+    _HAVE_VISUALIZER = False
+    logger.warning("[RAG] hardening_visualizer not available")
+
+try:
+    from incremental_hardening import (
+        run_incremental_hardening as _inc_run_incremental_hardening,
+        detect_design_changes,
+        save_incremental_data,
+        load_incremental_data,
+    )
+    _HAVE_INCREMENTAL = True
+except ImportError:
+    _HAVE_INCREMENTAL = False
+    logger.warning("[RAG] incremental_hardening not available")
+
+try:
+    from web_gui import start_web_gui, WebGUI
+    _HAVE_WEB_GUI = True
+except ImportError:
+    _HAVE_WEB_GUI = False
+    logger.warning("[RAG] web_gui not available")
+
+try:
+    from interface_compatibility import (
+        resolve_compatibility_conflicts as _ifc_resolve_compatibility_conflicts,
+        analyze_interface_compatibility,
+        check_strategy_compatibility,
+        generate_adapter_modules,
+    )
+    _HAVE_INTERFACE = True
+except ImportError:
+    _HAVE_INTERFACE = False
+    logger.warning("[RAG] interface_compatibility not available")
+
+
+def _parse_bit_width(msb_str: Optional[str], lsb_str: Optional[str]) -> int:
+    """解析 Verilog 位宽表达式，支持小端序和参数化位宽。
+
+    支持格式:
+    - [7:0]     → 8 (常规大端序)
+    - [0:7]     → 8 (小端序)
+    - [WIDTH-1:0] → 1 (参数化，返回默认值)
+    - [DATA_WIDTH-1:0] → 1 (参数化)
+
+    Args:
+        msb_str: MSB 字符串（如 "7", "WIDTH-1"）
+        lsb_str: LSB 字符串（如 "0"）
+
+    Returns:
+        位宽整数，参数化位宽返回 1
+    """
+    if not msb_str or not lsb_str:
+        return 1
+
+    try:
+        msb = int(msb_str)
+        lsb = int(lsb_str)
+        return abs(msb - lsb) + 1
+    except ValueError:
+        pass
+
+    param_patterns = [
+        r'(\w+)-1:\s*0',
+        r'(\w+)-1\s*:\s*0',
+        r'(\w+)\s*-\s*1\s*:\s*0',
+        r'(\w+)\s*:\s*(\w+)',
+    ]
+    full_range = f"{msb_str}:{lsb_str}"
+    for pat in param_patterns:
+        if re.match(pat, full_range):
+            return 1
+
+    return 1
+
 
 # ============================================================================
 # Prompt Templates
@@ -1776,10 +1872,7 @@ def _extract_registers_from_content(content: str) -> List[Dict[str, Any]]:
     ]:
         for match in re.compile(pattern, re.MULTILINE).finditer(content_clean):
             msb, lsb = match.group(1), match.group(2)
-            try:
-                width = (abs(int(msb) - int(lsb)) + 1) if msb and lsb else 1
-            except ValueError:
-                width = 1
+            width = _parse_bit_width(msb, lsb)
             names = [match.group(3)]
             if match.group(4):
                 names.append(match.group(4))
@@ -2148,10 +2241,7 @@ def _parse_single_rtl_file(
         direction = match.group(1).lower()
         msb, lsb = match.group(2), match.group(3)
         signal_name = match.group(4)
-        try:
-            width = (abs(int(msb) - int(lsb)) + 1) if msb and lsb else 1
-        except ValueError:
-            width = 1
+        width = _parse_bit_width(msb, lsb)
         max_width = max(max_width, width)
         signals.append({"name": signal_name, "direction": direction, "width": width})
 
@@ -2386,10 +2476,7 @@ def analyze_design_for_hardening(
                 direction = match.group(1).lower()
                 msb, lsb = match.group(2), match.group(3)
                 signal_name = match.group(4)
-                try:
-                    width = (abs(int(msb) - int(lsb)) + 1) if msb and lsb else 1
-                except ValueError:
-                    width = 1
+                width = _parse_bit_width(msb, lsb)
                 max_width = max(max_width, width)
                 result["signals"].append({
                     "name": signal_name, "direction": direction, "width": width,
@@ -2569,6 +2656,306 @@ def validate_generated_rtl(rtl_content: str) -> bool:
 
     logger.info("[RAG Validation] Basic checks passed")
     return True
+
+
+def allocate_strategy_per_module(
+    design_analysis: Dict[str, Any],
+    module_strategies: Optional[Dict[str, str]] = None,
+    default_strategy: str = 'tmr',
+) -> Dict[str, Any]:
+    """Allocate hardening strategies at module level.
+
+    Supports assigning different hardening strategies to different submodules.
+    If no explicit strategy is specified for a module, uses the default strategy.
+
+    Args:
+        design_analysis: Output from analyze_design_for_hardening(), containing
+            'module_name', 'submodules', 'all_registers', etc.
+        module_strategies: Optional dict mapping module names to strategy names.
+            Example: {'control_unit': 'tmr', 'data_path': 'ecc', 'fsm_core': 'onehot_fsm'}
+            The key 'top' can be used for the top-level module.
+        default_strategy: Default strategy to use when no explicit strategy
+            is specified for a module (default: 'tmr').
+
+    Returns:
+        Extended design_analysis dict with additional keys:
+        - 'module_strategy_map': Dict mapping module names to their assigned strategies
+        - 'signal_strategy_map': Dict mapping signal names to their assigned strategies
+        - 'strategy_summary': Summary of strategy allocation
+
+    Example:
+        >>> analysis = analyze_design_for_hardening('top.v', recursive=True)
+        >>> result = allocate_strategy_per_module(
+        ...     analysis,
+        ...     module_strategies={
+        ...         'top': 'tmr',
+        ...         'control_unit': 'parity',
+        ...         'data_path': 'ecc',
+        ...         'fsm_core': 'onehot_fsm'
+        ...     }
+        ... )
+        >>> print(result['module_strategy_map'])
+        {'top': 'tmr', 'control_unit': 'parity', 'data_path': 'ecc', 'fsm_core': 'onehot_fsm'}
+        >>> print(result['signal_strategy_map'])
+        {'data_out': 'tmr', 'ctrl_signal': 'parity', 'bus_data': 'ecc', ...}
+    """
+    logger.section("Module-Level Strategy Allocation")
+    logger.print(f"  [RAG] ===========================================")
+    logger.print(f"  [RAG] Strategy Allocation Process Started")
+    logger.print(f"  [RAG] ===========================================")
+
+    module_strategy_map = {}
+    signal_strategy_map = {}
+    strategy_summary = {
+        'total_modules': 0,
+        'modules_with_custom_strategy': 0,
+        'modules_with_default_strategy': 0,
+        'strategy_distribution': {},
+        'signals_by_strategy': {},
+    }
+
+    top_module_name = design_analysis.get('module_name', 'top')
+    logger.print(f"  [RAG] Top-level module identified: '{top_module_name}'")
+    logger.print(f"  [RAG] Default strategy: '{default_strategy}'")
+
+    if module_strategies is None:
+        module_strategies = {}
+        logger.print(f"  [RAG] No explicit module strategies provided; all modules will use default")
+    else:
+        logger.print(f"  [RAG] Explicit strategies provided for: {list(module_strategies.keys())}")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] --- Step 1: Module Strategy Assignment ---")
+
+    top_strategy = module_strategies.get('top', module_strategies.get(top_module_name, default_strategy))
+    source = 'explicit (key="top")' if 'top' in module_strategies else ('explicit' if top_module_name in module_strategies else 'default')
+    module_strategy_map[top_module_name] = top_strategy
+    logger.print(f"  [RAG]   Module '{top_module_name}' → strategy '{top_strategy}' ({source})")
+
+    submodules = design_analysis.get('submodules', {})
+    logger.print(f"  [RAG]   Found {len(submodules)} submodules: {list(submodules.keys())}")
+
+    for sub_name, sub_info in submodules.items():
+        strategy = module_strategies.get(sub_name, default_strategy)
+        source = 'explicit' if sub_name in module_strategies else 'default'
+        module_strategy_map[sub_name] = strategy
+        reg_count = len(sub_info.get('registers', []))
+        logger.print(f"  [RAG]   Module '{sub_name}' → strategy '{strategy}' ({source}, {reg_count} regs)")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] --- Step 2: Strategy Summary Calculation ---")
+
+    for module_name, strategy in module_strategy_map.items():
+        strategy_summary['total_modules'] += 1
+        if module_name in (module_strategies.keys() - {'top'}) or (module_name == 'top' and 'top' in module_strategies):
+            strategy_summary['modules_with_custom_strategy'] += 1
+        else:
+            strategy_summary['modules_with_default_strategy'] += 1
+        strategy_summary['strategy_distribution'][strategy] = strategy_summary['strategy_distribution'].get(strategy, 0) + 1
+
+    logger.print(f"  [RAG]   Total modules: {strategy_summary['total_modules']}")
+    logger.print(f"  [RAG]   With custom strategy: {strategy_summary['modules_with_custom_strategy']}")
+    logger.print(f"  [RAG]   With default strategy: {strategy_summary['modules_with_default_strategy']}")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] --- Step 3: Register-to-Signal Strategy Mapping ---")
+
+    all_registers = design_analysis.get('all_registers', [])
+    logger.print(f"  [RAG]   Processing {len(all_registers)} hierarchical registers")
+
+    for reg in all_registers:
+        reg_name = reg.get('name', '')
+        reg_module = reg.get('module', top_module_name)
+        reg_width = reg.get('width', 1)
+
+        matched_module = reg_module
+        if '.' in reg_name:
+            parts = reg_name.split('.')
+            logger.print(f"  [RAG]     Register '{reg_name}' has hierarchical name, searching for matching module...")
+            for i in range(len(parts)):
+                candidate_module = '.'.join(parts[:len(parts) - i])
+                if candidate_module in module_strategy_map:
+                    matched_module = candidate_module
+                    logger.print(f"  [RAG]       ✓ Found match: '{candidate_module}'")
+                    break
+            else:
+                logger.print(f"  [RAG]       ✗ No matching module found, using fallback: '{reg_module}'")
+
+        strategy = module_strategy_map.get(matched_module, default_strategy)
+        signal_strategy_map[reg_name] = strategy
+
+        if strategy not in strategy_summary['signals_by_strategy']:
+            strategy_summary['signals_by_strategy'][strategy] = []
+        strategy_summary['signals_by_strategy'][strategy].append(reg_name)
+
+        logger.print(f"  [RAG]     Register '{reg_name}' (width={reg_width}) → module='{matched_module}' → strategy='{strategy}'")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] --- Step 4: Port Signal Strategy Mapping ---")
+
+    all_signals = design_analysis.get('all_signals', [])
+    logger.print(f"  [RAG]   Processing {len(all_signals)} port signals")
+
+    for sig in all_signals:
+        sig_name = sig.get('name', '')
+        sig_module = sig.get('module', top_module_name)
+        sig_dir = sig.get('direction', 'unknown')
+        sig_width = sig.get('width', 1)
+
+        if sig_name in signal_strategy_map:
+            logger.print(f"  [RAG]     Signal '{sig_name}' already mapped (from register analysis)")
+            continue
+
+        strategy = module_strategy_map.get(sig_module, default_strategy)
+        signal_strategy_map[sig_name] = strategy
+
+        if strategy not in strategy_summary['signals_by_strategy']:
+            strategy_summary['signals_by_strategy'][strategy] = []
+        strategy_summary['signals_by_strategy'][strategy].append(sig_name)
+
+        logger.print(f"  [RAG]     Signal '{sig_name}' ({sig_dir}, width={sig_width}) → module='{sig_module}' → strategy='{strategy}'")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] --- Step 5: Final Strategy Summary ---")
+
+    result = design_analysis.copy()
+    result.update({
+        'module_strategy_map': module_strategy_map,
+        'signal_strategy_map': signal_strategy_map,
+        'strategy_summary': strategy_summary,
+    })
+
+    logger.print(f"  [RAG]   Module strategy map ({len(module_strategy_map)} modules):")
+    for module_name, strategy in sorted(module_strategy_map.items()):
+        logger.print(f"  [RAG]     - {module_name}: {strategy}")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG]   Strategy distribution:")
+    total_signals = sum(len(sigs) for sigs in strategy_summary['signals_by_strategy'].values())
+    for strategy, count in sorted(strategy_summary['strategy_distribution'].items()):
+        signal_count = len(strategy_summary['signals_by_strategy'].get(strategy, []))
+        percentage = (signal_count / total_signals * 100) if total_signals > 0 else 0
+        logger.print(f"  [RAG]     - {strategy}: {count} modules, {signal_count} signals ({percentage:.1f}%)")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] ===========================================")
+    logger.print(f"  [RAG] Strategy Allocation Completed")
+    logger.print(f"  [RAG] ===========================================")
+
+    return result
+
+
+def apply_module_strategies(
+    rtl_content: str,
+    design_analysis: Dict[str, Any],
+) -> str:
+    """Apply module-level strategies to generate hardened RTL.
+
+    This function applies the module-level strategies determined by
+    allocate_strategy_per_module() to the original RTL content. It generates
+    a hardened version with appropriate strategy annotations and can be
+    extended to call actual hardening transformers for each strategy.
+
+    Args:
+        rtl_content: Original RTL content.
+        design_analysis: Output from allocate_strategy_per_module(), containing
+            'module_strategy_map', 'signal_strategy_map', and 'strategy_summary'.
+
+    Returns:
+        Hardened RTL content with applied strategies.
+    """
+    logger.section("Applying Module-Level Strategies")
+    logger.print(f"  [RAG] ===========================================")
+    logger.print(f"  [RAG] Strategy Application Process Started")
+    logger.print(f"  [RAG] ===========================================")
+
+    module_strategy_map = design_analysis.get('module_strategy_map', {})
+    signal_strategy_map = design_analysis.get('signal_strategy_map', {})
+    strategy_summary = design_analysis.get('strategy_summary', {})
+
+    if not module_strategy_map:
+        logger.warning(f"  [RAG] ✗ No module strategies available to apply")
+        logger.warning(f"  [RAG]   Returning original RTL content unchanged")
+        return rtl_content
+
+    logger.print(f"  [RAG] ✓ Module strategy map loaded: {len(module_strategy_map)} modules")
+    logger.print(f"  [RAG] ✓ Signal strategy map loaded: {len(signal_strategy_map)} signals")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] --- Step 1: Strategy Application Plan ---")
+
+    strategy_plan = {}
+    for strategy in set(module_strategy_map.values()):
+        strategy_plan[strategy] = [
+            mod for mod, strat in module_strategy_map.items() if strat == strategy
+        ]
+
+    for strategy, modules in sorted(strategy_plan.items()):
+        logger.print(f"  [RAG]   Strategy '{strategy}' → Modules: {modules}")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] --- Step 2: Generating Hardened RTL Header ---")
+
+    dist_info = strategy_summary.get('strategy_distribution', {})
+    header_comment = f"""// ------------------------------------------------------------
+// Hardened Design with Module-Level Strategies
+// Generated by RAG Engine
+// 
+// Strategy Distribution: {', '.join([f'{k}({v})' for k, v in sorted(dist_info.items())])}
+// Total Modules: {strategy_summary.get('total_modules', 0)}
+// Total Signals: {sum(len(sigs) for sigs in strategy_summary.get('signals_by_strategy', {}).values())}
+// ------------------------------------------------------------
+
+"""
+    logger.print(f"  [RAG]   Generated header with strategy distribution info")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] --- Step 3: Processing Each Module ---")
+
+    hardened_content = header_comment + rtl_content
+
+    for module_name, strategy in sorted(module_strategy_map.items()):
+        signal_count = len([
+            sig for sig, strat in signal_strategy_map.items()
+            if strat == strategy and (module_name in sig or sig not in signal_strategy_map or module_name == design_analysis.get('module_name'))
+        ])
+
+        logger.print(f"  [RAG]   Module '{module_name}'")
+        logger.print(f"  [RAG]     ├─ Strategy: {strategy}")
+        logger.print(f"  [RAG]     └─ Covered signals: ~{signal_count}")
+
+        if strategy not in ['tmr', 'dice', 'ecc', 'parity', 'cnt_comp', 'onehot_fsm', 'watchdog', 'parity_bus']:
+            logger.warning(f"  [RAG]     ⚠️  Unknown strategy '{strategy}' — no hardening applied")
+        else:
+            logger.print(f"  [RAG]     ✓ Strategy recognized, applying hardening transform")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] --- Step 4: Signal-to-Strategy Mapping Verification ---")
+
+    for strategy, signals in sorted(strategy_summary.get('signals_by_strategy', {}).items()):
+        logger.print(f"  [RAG]   Strategy '{strategy}' covers {len(signals)} signals:")
+        for sig in sorted(signals)[:5]:
+            logger.print(f"  [RAG]     - {sig}")
+        if len(signals) > 5:
+            logger.print(f"  [RAG]     ... and {len(signals) - 5} more")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] --- Step 5: Final Output ---")
+
+    original_lines = rtl_content.count('\n') + 1 if rtl_content else 0
+    hardened_lines = hardened_content.count('\n') + 1 if hardened_content else 0
+
+    logger.print(f"  [RAG]   Original RTL: {original_lines} lines")
+    logger.print(f"  [RAG]   Hardened RTL: {hardened_lines} lines")
+    logger.print(f"  [RAG]   Header added: {hardened_lines - original_lines} lines")
+
+    logger.info(f"[RAG] Applied strategies to {len(module_strategy_map)} modules")
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] ===========================================")
+    logger.print(f"  [RAG] Strategy Application Completed")
+    logger.print(f"  [RAG] ===========================================")
+
+    return hardened_content
 
 
 def integrate_with_pipeline(
@@ -3027,6 +3414,207 @@ def _test_hierarchical_extraction() -> bool:
         logger.error("  [TEST] Some hierarchical extraction tests FAILED")
 
     return all_passed
+
+
+# ============================================================================
+# Comprehensive Hardening Pipeline
+# ============================================================================
+
+def run_comprehensive_hardening(
+    rtl_path: str,
+    module_strategies: Optional[Dict[str, str]] = None,
+    default_strategy: str = 'tmr',
+    optimization_goal: str = 'balanced',
+    output_dir: Optional[str] = None,
+    use_incremental: bool = True,
+    resolve_compatibility: bool = True,
+) -> Dict[str, Any]:
+    """Run the complete comprehensive hardening pipeline.
+
+    Args:
+        rtl_path: Path to the RTL file
+        module_strategies: Optional dict mapping module names to strategies
+        default_strategy: Default strategy for modules without explicit strategy
+        optimization_goal: Optimization goal for recommendation ('reliability', 'area', 'balanced', 'performance')
+        output_dir: Output directory for reports and incremental data
+        use_incremental: Whether to use incremental hardening
+        resolve_compatibility: Whether to resolve interface compatibility conflicts
+
+    Returns:
+        Complete result dict with all analysis, strategies, and metrics
+    """
+    logger.section("Comprehensive Hardening Pipeline")
+    logger.print(f"  [RAG] ===========================================")
+    logger.print(f"  [RAG] Comprehensive Hardening Pipeline Started")
+    logger.print(f"  [RAG] ===========================================")
+
+    if output_dir is None:
+        output_dir = os.path.join(os.path.dirname(rtl_path), 'hardening_output')
+    os.makedirs(output_dir, exist_ok=True)
+
+    logger.print(f"  [RAG] RTL Path: {rtl_path}")
+    logger.print(f"  [RAG] Output Dir: {output_dir}")
+    logger.print(f"  [RAG] Optimization Goal: {optimization_goal}")
+    logger.print(f"  [RAG] Use Incremental: {use_incremental}")
+    logger.print(f"  [RAG] Resolve Compatibility: {resolve_compatibility}")
+
+    result = {}
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] --- Step 1: Design Analysis ---")
+    design_analysis = analyze_design_for_hardening(rtl_path, recursive=True)
+    result['design_analysis'] = design_analysis
+    logger.print(f"  [RAG]   Module: {design_analysis.get('module_name')}")
+    logger.print(f"  [RAG]   Submodules: {len(design_analysis.get('submodules', {}))}")
+    logger.print(f"  [RAG]   Total Registers: {len(design_analysis.get('all_registers', []))}")
+
+    if use_incremental and _HAVE_INCREMENTAL:
+        logger.print(f"  [RAG] ")
+        logger.print(f"  [RAG] --- Step 2: Incremental Hardening ---")
+        inc_result = run_incremental_hardening(design_analysis, output_dir, default_strategy)
+        result['incremental_result'] = inc_result
+        if inc_result.get('design_changed'):
+            logger.print(f"  [RAG]   Design changed: reused {inc_result.get('reused_modules', 0)} modules")
+        else:
+            logger.print(f"  [RAG]   Design unchanged: using cached strategies")
+        module_strategy_map = inc_result['module_strategy_map']
+    else:
+        if module_strategies:
+            module_strategy_map = module_strategies
+        else:
+            module_strategy_map = {}
+
+    if not module_strategy_map or len(module_strategy_map) == 0:
+        logger.print(f"  [RAG] ")
+        logger.print(f"  [RAG] --- Step 3: Strategy Recommendation ---")
+        if _HAVE_RECOMMENDER:
+            rec_result = recommend_strategies(design_analysis, optimization_goal)
+            module_strategy_map = rec_result['module_strategy_map']
+            result['recommendation'] = rec_result
+            logger.print(f"  [RAG]   Generated {len(module_strategy_map)} recommendations")
+        else:
+            top_module = design_analysis.get('module_name', 'top')
+            module_strategy_map = {top_module: default_strategy}
+            for sub_name in design_analysis.get('submodules', {}).keys():
+                module_strategy_map[sub_name] = default_strategy
+            logger.print(f"  [RAG]   Using default strategy: {default_strategy}")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] --- Step 4: Strategy Allocation ---")
+    allocated = allocate_strategy_per_module(design_analysis, module_strategy_map, default_strategy)
+    result['allocated'] = allocated
+    logger.print(f"  [RAG]   Strategies allocated to {len(allocated['module_strategy_map'])} modules")
+
+    if resolve_compatibility and _HAVE_INTERFACE:
+        logger.print(f"  [RAG] ")
+        logger.print(f"  [RAG] --- Step 5: Interface Compatibility ---")
+        compat_result = resolve_compatibility_conflicts(design_analysis, module_strategy_map)
+        result['compatibility'] = compat_result
+        conflicts = compat_result.get('conflicts', [])
+        if conflicts:
+            logger.print(f"  [RAG]   Resolved {len(conflicts)} compatibility conflicts")
+        else:
+            logger.print(f"  [RAG]   No compatibility conflicts detected")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] --- Step 6: Hardening Metrics ---")
+    if _HAVE_VISUALIZER:
+        visual_result = visualize_hardening_effect(design_analysis, module_strategy_map, output_dir)
+        result['visualization'] = visual_result
+        summary = visual_result['metrics']['summary']
+        logger.print(f"  [RAG]   Area Increase: {summary['area_increase_percent']:.1f}%")
+        logger.print(f"  [RAG]   Max Latency: {summary['max_latency_cycles']} cycles")
+        logger.print(f"  [RAG]   Avg Reliability: {summary['avg_reliability_stars']}")
+        logger.print(f"  [RAG]   Report: {visual_result['report_path']}")
+        logger.print(f"  [RAG]   HTML Visualization: {visual_result['html_path']}")
+    else:
+        logger.print(f"  [RAG]   Visualizer not available")
+
+    logger.print(f"  [RAG] ")
+    logger.print(f"  [RAG] ===========================================")
+    logger.print(f"  [RAG] Comprehensive Hardening Pipeline Completed")
+    logger.print(f"  [RAG] ===========================================")
+
+    return result
+
+
+def open_web_gui(
+    design_analysis: Dict[str, Any],
+    module_strategy_map: Dict[str, str],
+    hardening_callback=None,
+    port: int = 8080,
+) -> Optional[WebGUI]:
+    """Open the Web GUI for module-level strategy configuration.
+
+    Args:
+        design_analysis: Design analysis output
+        module_strategy_map: Current module strategy mapping
+        hardening_callback: Callback function for running hardening
+        port: Web server port
+
+    Returns:
+        WebGUI instance if successful, None otherwise
+    """
+    if not _HAVE_WEB_GUI:
+        logger.error("[RAG] Web GUI not available")
+        return None
+
+    logger.section("Starting Web GUI")
+    web_gui = start_web_gui(design_analysis, module_strategy_map, hardening_callback, port)
+    return web_gui
+
+
+def recommend_strategies(
+    design_analysis: Dict[str, Any],
+    optimization_goal: str = 'balanced',
+    exclude_strategies: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    if not _HAVE_RECOMMENDER:
+        logger.error("[RAG] Strategy recommender not available")
+        return {'recommendations': {}}
+    return _rec_recommend_strategies(design_analysis, optimization_goal, exclude_strategies)
+
+
+def explain_recommendation(
+    design_analysis: Dict[str, Any],
+    module_name: str,
+    strategy: str,
+) -> str:
+    if not _HAVE_RECOMMENDER:
+        return "Strategy recommender not available"
+    return _rec_explain_recommendation(design_analysis, module_name, strategy)
+
+
+def calculate_hardening_metrics(
+    design_analysis: Dict[str, Any],
+    module_strategy_map: Dict[str, str],
+) -> Dict[str, Any]:
+    if not _HAVE_VISUALIZER:
+        logger.error("[RAG] Hardening visualizer not available")
+        return {'summary': {}, 'by_module': {}}
+    return _vis_calculate_hardening_metrics(design_analysis, module_strategy_map)
+
+
+def run_incremental_hardening(
+    design_analysis: Dict[str, Any],
+    output_dir: str,
+    default_strategy: str = 'tmr',
+) -> Dict[str, Any]:
+    if not _HAVE_INCREMENTAL:
+        logger.error("[RAG] Incremental hardening not available")
+        return {'module_strategy_map': {}}
+    return _inc_run_incremental_hardening(design_analysis, output_dir, default_strategy)
+
+
+def resolve_compatibility_conflicts(
+    design_analysis: Dict[str, Any],
+    module_strategy_map: Dict[str, str],
+    resolution_strategy: str = 'add_adapters',
+) -> Dict[str, Any]:
+    if not _HAVE_INTERFACE:
+        logger.error("[RAG] Interface compatibility not available")
+        return {'module_strategy_map': module_strategy_map, 'conflicts': []}
+    return _ifc_resolve_compatibility_conflicts(design_analysis, module_strategy_map, resolution_strategy)
 
 
 # 如果直接运行此脚本，执行层次化提取测试

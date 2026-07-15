@@ -112,14 +112,17 @@ class HardeningGUI:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(APP_TITLE)
-        self.root.geometry("1100x750")
-        self.root.minsize(900, 600)
+        self.root.geometry("1200x800")
+        self.root.minsize(1000, 650)
 
         # 尝试设置图标（若有）
         try:
             self.root.iconbitmap(default='')
         except Exception:
             pass
+
+        # ---------- 样式配置 ----------
+        self._configure_styles()
 
         # ---------- 变量 ----------
         self.pipeline_file = tk.StringVar()
@@ -148,6 +151,57 @@ class HardeningGUI:
         # 窗口关闭事件
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    def _configure_styles(self):
+        """配置ttk样式，为不同功能按钮添加颜色区分"""
+        style = ttk.Style()
+        style.theme_use('clam')
+
+        style.configure('.', font=("微软雅黑", 9))
+        style.configure('Title.TLabel', font=("微软雅黑", 11, "bold"), foreground="#1976D2")
+        style.configure('Info.TLabel', font=("微软雅黑", 9), foreground="#666")
+        style.configure('Success.TLabel', font=("微软雅黑", 9), foreground="#388E3C")
+        style.configure('Warning.TLabel', font=("微软雅黑", 9), foreground="#F57C00")
+        style.configure('Error.TLabel', font=("微软雅黑", 9), foreground="#D32F2F")
+
+        style.configure('Browse.TButton', padding=6, font=("微软雅黑", 9))
+        style.map('Browse.TButton',
+                  background=[('active', '#E3F2FD'), ('!active', '#BBDEFB')],
+                  foreground=[('active', '#1976D2'), ('!active', '#1565C0')])
+
+        style.configure('Action.TButton', padding=6, font=("微软雅黑", 9, "bold"))
+        style.map('Action.TButton',
+                  background=[('active', '#C8E6C9'), ('!active', '#A5D6A7')],
+                  foreground=[('active', '#2E7D32'), ('!active', '#1B5E20')])
+
+        style.configure('Run.TButton', padding=6, font=("微软雅黑", 9, "bold"))
+        style.map('Run.TButton',
+                  background=[('active', '#FFCDD2'), ('!active', '#EF9A9A')],
+                  foreground=[('active', '#C62828'), ('!active', '#B71C1C')])
+
+        style.configure('Export.TButton', padding=6, font=("微软雅黑", 9))
+        style.map('Export.TButton',
+                  background=[('active', '#FFF3E0'), ('!active', '#FFE0B2')],
+                  foreground=[('active', '#E65100'), ('!active', '#E65100')])
+
+        style.configure('Recommend.TButton', padding=6, font=("微软雅黑", 9, "bold"))
+        style.map('Recommend.TButton',
+                  background=[('active', '#E1BEE7'), ('!active', '#CE93D8')],
+                  foreground=[('active', '#6A1B9A'), ('!active', '#6A1B9A')])
+
+        style.configure('Visualize.TButton', padding=6, font=("微软雅黑", 9))
+        style.map('Visualize.TButton',
+                  background=[('active', '#B2EBF2'), ('!active', '#80DEEA')],
+                  foreground=[('active', '#006064'), ('!active', '#006064')])
+
+        style.configure('LabelFrame.TLabelframe', font=("微软雅黑", 10, "bold"), foreground="#333")
+        style.configure('LabelFrame.TLabelframe.Label', font=("微软雅黑", 10, "bold"), foreground="#1976D2")
+
+        style.configure('Treeview', font=("微软雅黑", 9), rowheight=24)
+        style.configure('Treeview.Heading', font=("微软雅黑", 9, "bold"), foreground="#1976D2")
+        style.map('Treeview',
+                  background=[('selected', '#1976D2'), ('!selected', '#FFFFFF')],
+                  foreground=[('selected', '#FFFFFF'), ('!selected', '#333333')])
+
     # ========================================================
     # 菜单栏
     # ========================================================
@@ -174,17 +228,193 @@ class HardeningGUI:
         )
 
     # ========================================================
-    # 主区域 — Tab 控件
+    # 主区域 — EDA风格布局
     # ========================================================
     def _build_main(self):
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=3, pady=3)
+
+        self._build_toolbar(main_frame)
+
+        center_frame = ttk.Frame(main_frame)
+        center_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
+
+        self._build_left_panel(center_frame)
+
+        self._build_center_workspace(center_frame)
+
+        self._build_right_panel(center_frame)
+
+        self._build_bottom_output(main_frame)
+
+    def _build_toolbar(self, parent):
+        toolbar = ttk.Frame(parent, style='Toolbar.TFrame')
+        toolbar.pack(fill=tk.X, padx=2, pady=2)
+
+        style = ttk.Style()
+        style.configure('Toolbar.TFrame', background='#f5f5f5', relief=tk.RAISED)
+
+        tools = [
+            ('加固管线', self._switch_to_tab_pipeline, 'Browse.TButton'),
+            ('测试运行', self._switch_to_tab_testrunner, 'Action.TButton'),
+            ('信号扫描', self._switch_to_tab_signalscan, 'Action.TButton'),
+            ('AIG分析', self._switch_to_tab_aig, 'Action.TButton'),
+        ]
+
+        for text, cmd, btn_style in tools:
+            btn = ttk.Button(toolbar, text=text, command=cmd, style=btn_style)
+            btn.pack(side=tk.LEFT, padx=3, pady=2)
+
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
+
+        new_tools = [
+            ('层次化加固', self._switch_to_tab_hierarchical, 'Run.TButton'),
+            ('策略推荐', self._switch_to_tab_strategy_recommend, 'Recommend.TButton'),
+            ('效果可视化', self._switch_to_tab_visualization, 'Visualize.TButton'),
+            ('增量加固', self._switch_to_tab_incremental, 'Action.TButton'),
+            ('Web GUI', self._switch_to_tab_web_gui, 'Export.TButton'),
+        ]
+
+        for text, cmd, btn_style in new_tools:
+            btn = ttk.Button(toolbar, text=text, command=cmd, style=btn_style)
+            btn.pack(side=tk.LEFT, padx=3, pady=2)
+
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5)
+
+        report_btn = ttk.Button(toolbar, text='报告', command=self._switch_to_tab_reports, style='Export.TButton')
+        report_btn.pack(side=tk.RIGHT, padx=3, pady=2)
+
+    def _build_left_panel(self, parent):
+        left_panel = ttk.Frame(parent, width=220)
+        left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 3))
+        left_panel.pack_propagate(False)
+
+        project_frame = ttk.LabelFrame(left_panel, text="项目资源", padding=5)
+        project_frame.pack(fill=tk.X, padx=3, pady=3)
+
+        self.project_tree = ttk.Treeview(project_frame, show='tree')
+        self.project_tree.pack(fill=tk.BOTH, expand=True)
+
+        project_root = self.project_tree.insert('', tk.END, text='RTL 设计', open=True)
+        self.project_tree.insert(project_root, tk.END, text='未选择文件', tags=('file',))
+
+        strategy_frame = ttk.LabelFrame(left_panel, text="加固策略", padding=5)
+        strategy_frame.pack(fill=tk.X, padx=3, pady=3)
+
+        strategies = ['tmr', 'dice', 'ecc', 'parity', 'cnt_comp', 'onehot_fsm', 'watchdog', 'parity_bus']
+        for strat in strategies:
+            cb = ttk.Checkbutton(strategy_frame, text=strat, variable=self.strategy_vars.get(strat))
+            cb.pack(anchor=tk.W, pady=1)
+
+    def _build_center_workspace(self, parent):
+        center_frame = ttk.Frame(parent)
+        center_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.notebook = ttk.Notebook(center_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
 
         self._build_tab_pipeline()
         self._build_tab_testrunner()
         self._build_tab_signalscan()
         self._build_tab_aig()
+        self._build_tab_hierarchical()
+        self._build_tab_strategy_recommend()
+        self._build_tab_visualization()
+        self._build_tab_incremental()
+        self._build_tab_web_gui()
         self._build_tab_reports()
+
+    def _build_right_panel(self, parent):
+        right_panel = ttk.Frame(parent, width=200)
+        right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(3, 0))
+        right_panel.pack_propagate(False)
+
+        info_frame = ttk.LabelFrame(right_panel, text="设计信息", padding=5)
+        info_frame.pack(fill=tk.X, padx=3, pady=3)
+
+        self.design_info_vars = {
+            'module': tk.StringVar(value="未选择"),
+            'regs': tk.StringVar(value="0"),
+            'ports': tk.StringVar(value="0"),
+            'submodules': tk.StringVar(value="0"),
+        }
+
+        for label, key in [('模块', 'module'), ('寄存器', 'regs'), ('端口', 'ports'), ('子模块', 'submodules')]:
+            row = ttk.Frame(info_frame)
+            row.pack(fill=tk.X, pady=2)
+            ttk.Label(row, text=label + ':', width=8).pack(side=tk.LEFT)
+            ttk.Label(row, textvariable=self.design_info_vars[key], font=("微软雅黑", 9, "bold"),
+                      foreground="#1976D2").pack(side=tk.LEFT)
+
+        quick_actions = ttk.LabelFrame(right_panel, text="快捷操作", padding=5)
+        quick_actions.pack(fill=tk.X, padx=3, pady=3)
+
+        quick_btns = [
+            ('快速加固', self._quick_harden, 'Run.TButton'),
+            ('分析设计', self._quick_analyze, 'Action.TButton'),
+            ('查看报告', self._quick_report, 'Export.TButton'),
+        ]
+
+        for text, cmd, style in quick_btns:
+            btn = ttk.Button(quick_actions, text=text, command=cmd, style=style)
+            btn.pack(fill=tk.X, pady=2)
+
+    def _build_bottom_output(self, parent):
+        bottom_frame = ttk.Frame(parent, height=120)
+        bottom_frame.pack(fill=tk.X, padx=2, pady=(5, 0))
+        bottom_frame.pack_propagate(False)
+
+        output_notebook = ttk.Notebook(bottom_frame)
+        output_notebook.pack(fill=tk.BOTH, expand=True)
+
+        output_frame = ttk.Frame(output_notebook)
+        output_notebook.add(output_frame, text="输出")
+        self.bottom_output = scrolledtext.ScrolledText(output_frame, height=5, font=("Consolas", 9))
+        self.bottom_output.pack(fill=tk.BOTH, expand=True)
+
+        log_frame = ttk.Frame(output_notebook)
+        output_notebook.add(log_frame, text="日志")
+        self.bottom_log = scrolledtext.ScrolledText(log_frame, height=5, font=("Consolas", 9))
+        self.bottom_log.pack(fill=tk.BOTH, expand=True)
+
+    def _switch_to_tab_pipeline(self):
+        self.notebook.select(0)
+
+    def _switch_to_tab_testrunner(self):
+        self.notebook.select(1)
+
+    def _switch_to_tab_signalscan(self):
+        self.notebook.select(2)
+
+    def _switch_to_tab_aig(self):
+        self.notebook.select(3)
+
+    def _switch_to_tab_hierarchical(self):
+        self.notebook.select(4)
+
+    def _switch_to_tab_strategy_recommend(self):
+        self.notebook.select(5)
+
+    def _switch_to_tab_visualization(self):
+        self.notebook.select(6)
+
+    def _switch_to_tab_incremental(self):
+        self.notebook.select(7)
+
+    def _switch_to_tab_web_gui(self):
+        self.notebook.select(8)
+
+    def _switch_to_tab_reports(self):
+        self.notebook.select(9)
+
+    def _quick_harden(self):
+        self.notebook.select(4)
+
+    def _quick_analyze(self):
+        self.notebook.select(5)
+
+    def _quick_report(self):
+        self.notebook.select(9)
 
     # ========================================================
     # 状态栏
@@ -929,7 +1159,798 @@ class HardeningGUI:
         threading.Thread(target=task, daemon=True).start()
 
     # ========================================================
-    # Tab 5: 报告 (Reports)
+    # Tab 5: 层次化加固 (Hierarchical Hardening)
+    # ========================================================
+    def _build_tab_hierarchical(self):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text=" 层次化加固 (Hierarchical) ")
+
+        top_row = ttk.Frame(tab)
+        top_row.pack(fill=tk.X, padx=5, pady=(5, 0))
+
+        self._make_label(top_row, "RTL 文件:", width=10).pack(side=tk.LEFT)
+        self.hier_rtl_file = tk.StringVar()
+        ent_rtl = ttk.Entry(top_row, textvariable=self.hier_rtl_file)
+        ent_rtl.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        btn_rtl = ttk.Button(top_row, text="浏览...", command=self._hier_browse_rtl, style='Browse.TButton')
+        btn_rtl.pack(side=tk.LEFT, padx=(0, 5))
+        add_tooltip(btn_rtl, "选择顶层 RTL 文件")
+        btn_load = ttk.Button(top_row, text="加载设计", command=self._hier_load_design, style='Action.TButton')
+        btn_load.pack(side=tk.LEFT)
+        add_tooltip(btn_load, "加载 RTL 设计并提取层次结构")
+
+        main_area = ttk.Frame(tab)
+        main_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        tree_frame = ttk.LabelFrame(main_area, text="模块层次结构", padding=5)
+        tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+
+        self.hier_tree = ttk.Treeview(tree_frame, columns=('strategy', 'regs'), show='tree headings')
+        self.hier_tree.heading('#0', text='模块名称')
+        self.hier_tree.heading('strategy', text='加固策略')
+        self.hier_tree.heading('regs', text='寄存器数')
+        self.hier_tree.column('#0', width=200)
+        self.hier_tree.column('strategy', width=120)
+        self.hier_tree.column('regs', width=80)
+
+        scroll_tree = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.hier_tree.yview)
+        self.hier_tree.configure(yscrollcommand=scroll_tree.set)
+        scroll_tree.pack(side=tk.RIGHT, fill=tk.Y)
+        self.hier_tree.pack(fill=tk.BOTH, expand=True)
+        self.hier_tree.bind('<<TreeviewSelect>>', self._hier_on_select)
+
+        config_frame = ttk.LabelFrame(main_area, text="策略配置", padding=8, width=280)
+        config_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        config_frame.pack_propagate(False)
+
+        self.hier_selected_module = tk.StringVar(value="未选择")
+        lbl_module = ttk.Label(config_frame, text="选中模块:", font=("微软雅黑", 9))
+        lbl_module.pack(anchor=tk.W)
+        lbl_module_val = ttk.Label(config_frame, textvariable=self.hier_selected_module,
+                                   font=("微软雅黑", 10, "bold"), foreground="#1976D2")
+        lbl_module_val.pack(anchor=tk.W, pady=(0, 8))
+
+        ttk.Label(config_frame, text="加固策略:", font=("微软雅黑", 9)).pack(anchor=tk.W)
+        self.hier_strategy = ttk.Combobox(config_frame, state='readonly', width=22)
+        self.hier_strategy['values'] = ('tmr', 'dice', 'ecc', 'parity', 'cnt_comp',
+                                       'onehot_fsm', 'watchdog', 'parity_bus')
+        self.hier_strategy.set('tmr')
+        self.hier_strategy.pack(anchor=tk.W, pady=(0, 8))
+
+        btn_apply = ttk.Button(config_frame, text="应用策略", command=self._hier_apply_strategy, style='Action.TButton')
+        btn_apply.pack(fill=tk.X, pady=(0, 4))
+        add_tooltip(btn_apply, "将策略应用到选中模块")
+
+        btn_apply_all = ttk.Button(config_frame, text="全部应用默认", command=self._hier_apply_all_default, style='Action.TButton')
+        btn_apply_all.pack(fill=tk.X, pady=(0, 8))
+        add_tooltip(btn_apply_all, "将默认策略应用到所有模块")
+
+        ttk.Separator(config_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+
+        ttk.Label(config_frame, text="策略映射:", font=("微软雅黑", 9)).pack(anchor=tk.W, pady=(5, 2))
+        self.hier_strategy_text = scrolledtext.ScrolledText(config_frame, height=8,
+                                                            font=("Consolas", 9))
+        self.hier_strategy_text.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+
+        bottom_bar = ttk.Frame(tab)
+        bottom_bar.pack(fill=tk.X, padx=5, pady=(0, 5))
+
+        btn_run = ttk.Button(bottom_bar, text="运行层次化加固", command=self._hier_run_hardening, style='Run.TButton')
+        btn_run.pack(side=tk.LEFT, padx=(0, 5))
+        add_tooltip(btn_run, "根据模块级策略配置运行加固")
+
+        btn_export = ttk.Button(bottom_bar, text="导出策略配置", command=self._hier_export_config, style='Export.TButton')
+        btn_export.pack(side=tk.LEFT)
+        add_tooltip(btn_export, "导出当前策略配置为 JSON 文件")
+
+        self.hier_status_var = tk.StringVar(value="就绪")
+        lbl_status = ttk.Label(bottom_bar, textvariable=self.hier_status_var,
+                               font=("微软雅黑", 9), foreground="#388E3C")
+        lbl_status.pack(side=tk.RIGHT)
+
+        self._hier_design_info = {}
+        self._hier_module_strategies = {}
+
+    def _hier_browse_rtl(self):
+        path = filedialog.askopenfilename(
+            title="选择 RTL 文件",
+            filetypes=[("Verilog 文件", "*.v"), ("SystemVerilog 文件", "*.sv"),
+                       ("所有文件", "*.*")],
+            initialdir=TEST_MOCK_DIR if os.path.isdir(TEST_MOCK_DIR) else SCRIPT_DIR,
+        )
+        if path:
+            self.hier_rtl_file.set(path)
+
+    def _hier_load_design(self):
+        rtl_path = self.hier_rtl_file.get()
+        if not rtl_path or not os.path.isfile(rtl_path):
+            messagebox.showerror("错误", "请选择有效的 RTL 文件")
+            return
+
+        self._set_status("加载设计中...", f"分析 {os.path.basename(rtl_path)}")
+
+        def task():
+            try:
+                sys.path.insert(0, os.path.join(SCRIPT_DIR, 'sim', 'formal_test'))
+                from rag_integration import analyze_design_for_hardening
+
+                analysis = analyze_design_for_hardening(rtl_path, recursive=True)
+
+                self._hier_design_info = analysis
+                self._hier_module_strategies = {}
+
+                for item in self.hier_tree.get_children():
+                    self.hier_tree.delete(item)
+
+                top_name = analysis.get('module_name', 'top')
+                top_regs = len(analysis.get('registers', []))
+                top_id = self.hier_tree.insert('', tk.END, text=top_name,
+                                                values=('tmr', top_regs))
+                self._hier_module_strategies[top_name] = 'tmr'
+
+                submodules = analysis.get('submodules', {})
+                for sub_name, sub_info in submodules.items():
+                    sub_regs = len(sub_info.get('registers', []))
+                    self.hier_tree.insert(top_id, tk.END, text=sub_name,
+                                            values=('tmr', sub_regs))
+                    self._hier_module_strategies[sub_name] = 'tmr'
+
+                self.hier_status_var.set(f"已加载: {top_name} ({len(submodules)} 个子模块)")
+                self._update_strategy_text()
+
+            except Exception as e:
+                self.hier_status_var.set(f"加载失败: {str(e)}")
+                messagebox.showerror("加载错误", f"分析 RTL 文件时出错:\n{str(e)}")
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _hier_on_select(self, event=None):
+        selection = self.hier_tree.selection()
+        if selection:
+            item = selection[0]
+            module_name = self.hier_tree.item(item, 'text')
+            current_strategy = self._hier_module_strategies.get(module_name, 'tmr')
+            self.hier_selected_module.set(module_name)
+            self.hier_strategy.set(current_strategy)
+
+    def _hier_apply_strategy(self):
+        selection = self.hier_tree.selection()
+        if not selection:
+            messagebox.showwarning("提示", "请先选择一个模块")
+            return
+
+        item = selection[0]
+        module_name = self.hier_tree.item(item, 'text')
+        strategy = self.hier_strategy.get()
+
+        self._hier_module_strategies[module_name] = strategy
+        self.hier_tree.set(item, 'strategy', strategy)
+
+        self._update_strategy_text()
+        self._set_status(f"已为 {module_name} 应用策略: {strategy}")
+
+    def _hier_apply_all_default(self):
+        default_strategy = self.hier_strategy.get()
+        for item in self.hier_tree.get_children():
+            self._hier_tree_recursive_apply(item, default_strategy)
+
+        self._update_strategy_text()
+        self._set_status(f"已为所有模块应用默认策略: {default_strategy}")
+
+    def _hier_tree_recursive_apply(self, parent_item, strategy):
+        module_name = self.hier_tree.item(parent_item, 'text')
+        self._hier_module_strategies[module_name] = strategy
+        self.hier_tree.set(parent_item, 'strategy', strategy)
+
+        for child in self.hier_tree.get_children(parent_item):
+            self._hier_tree_recursive_apply(child, strategy)
+
+    def _update_strategy_text(self):
+        self.hier_strategy_text.delete("1.0", tk.END)
+        import json
+        config = {
+            'rtl_file': self.hier_rtl_file.get(),
+            'module_strategies': self._hier_module_strategies,
+        }
+        self.hier_strategy_text.insert("1.0", json.dumps(config, indent=2, ensure_ascii=False))
+
+    def _hier_run_hardening(self):
+        rtl_path = self.hier_rtl_file.get()
+        if not rtl_path or not os.path.isfile(rtl_path):
+            messagebox.showerror("错误", "请先加载 RTL 设计")
+            return
+
+        if not self._hier_module_strategies:
+            messagebox.showerror("错误", "请先配置模块策略")
+            return
+
+        self._set_status("运行层次化加固中...", "层次化加固")
+
+        def task():
+            try:
+                sys.path.insert(0, os.path.join(SCRIPT_DIR, 'sim', 'formal_test'))
+                from rag_integration import analyze_design_for_hardening, \
+                    allocate_strategy_per_module, apply_module_strategies
+
+                analysis = analyze_design_for_hardening(rtl_path, recursive=True)
+                analysis_with_strategy = allocate_strategy_per_module(
+                    analysis,
+                    module_strategies=self._hier_module_strategies,
+                )
+
+                with open(rtl_path, 'r', encoding='utf-8') as f:
+                    rtl_content = f.read()
+
+                hardened_content = apply_module_strategies(rtl_content, analysis_with_strategy)
+
+                base_name = os.path.splitext(os.path.basename(rtl_path))[0]
+                output_path = os.path.join(REPORTS_DIR, f"{base_name}_hierarchical_hardened.v")
+
+                os.makedirs(REPORTS_DIR, exist_ok=True)
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(hardened_content)
+
+                self.hier_status_var.set(f"加固完成! 输出: {os.path.basename(output_path)}")
+                self._set_status("层次化加固完成", f"已生成: {output_path}")
+
+                messagebox.showinfo("加固完成", f"层次化加固已完成!\n输出文件:\n{output_path}")
+
+            except Exception as e:
+                self.hier_status_var.set(f"加固失败: {str(e)}")
+                messagebox.showerror("加固错误", f"运行层次化加固时出错:\n{str(e)}")
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _hier_export_config(self):
+        if not self._hier_module_strategies:
+            messagebox.showwarning("提示", "没有可导出的策略配置")
+            return
+
+        path = filedialog.asksaveasfilename(
+            title="导出策略配置",
+            defaultextension=".json",
+            filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")],
+            initialdir=REPORTS_DIR,
+        )
+        if not path:
+            return
+
+        import json
+        config = {
+            'rtl_file': self.hier_rtl_file.get(),
+            'module_strategies': self._hier_module_strategies,
+            'export_time': time.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+
+        self._set_status(f"配置已导出: {path}", "导出策略配置")
+        messagebox.showinfo("导出成功", f"策略配置已保存至:\n{path}")
+
+    # ========================================================
+    # Tab 6: 策略推荐 (Strategy Recommendation)
+    # ========================================================
+    def _build_tab_strategy_recommend(self):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text=" 策略推荐 (Recommendation) ")
+
+        f_input = ttk.LabelFrame(tab, text="配置", padding=8)
+        f_input.pack(fill=tk.X, padx=5, pady=(5, 0))
+
+        row = ttk.Frame(f_input)
+        row.pack(fill=tk.X, pady=2)
+
+        self.rec_rtl_file = tk.StringVar()
+        self._make_label(row, "RTL 文件:", width=10).pack(side=tk.LEFT)
+        ent_rtl = ttk.Entry(row, textvariable=self.rec_rtl_file)
+        ent_rtl.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        btn_rtl = ttk.Button(row, text="浏览...", command=self._rec_browse_rtl, style='Browse.TButton')
+        btn_rtl.pack(side=tk.LEFT, padx=(0, 5))
+        add_tooltip(btn_rtl, "选择 RTL 文件进行策略推荐")
+
+        self._make_label(row, "优化目标:", width=10).pack(side=tk.LEFT)
+        self.rec_goal = ttk.Combobox(row, state='readonly', width=18)
+        self.rec_goal['values'] = ('balanced', 'reliability', 'area', 'performance')
+        self.rec_goal.set('balanced')
+        self.rec_goal.pack(side=tk.LEFT, padx=5)
+        add_tooltip(self.rec_goal, "选择策略优化目标")
+
+        btn_recommend = ttk.Button(row, text="生成推荐", command=self._rec_generate, style='Recommend.TButton')
+        btn_recommend.pack(side=tk.LEFT)
+        add_tooltip(btn_recommend, "分析设计并生成策略推荐")
+
+        f_result = ttk.LabelFrame(tab, text="推荐结果", padding=5)
+        f_result.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        columns = ('module', 'type', 'strategy', 'score', 'alternatives')
+        self.rec_tree = ttk.Treeview(f_result, columns=columns, show='headings', height=12)
+        self.rec_tree.heading('module', text='模块名称')
+        self.rec_tree.heading('type', text='模块类型')
+        self.rec_tree.heading('strategy', text='推荐策略')
+        self.rec_tree.heading('score', text='评分')
+        self.rec_tree.heading('alternatives', text='备选策略')
+
+        self.rec_tree.column('module', width=180)
+        self.rec_tree.column('type', width=100)
+        self.rec_tree.column('strategy', width=130)
+        self.rec_tree.column('score', width=80, anchor=tk.CENTER)
+        self.rec_tree.column('alternatives', width=300)
+
+        scroll_tree = ttk.Scrollbar(f_result, orient=tk.VERTICAL, command=self.rec_tree.yview)
+        self.rec_tree.configure(yscrollcommand=scroll_tree.set)
+        self.rec_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll_tree.pack(side=tk.RIGHT, fill=tk.Y)
+
+        f_status = ttk.Frame(f_result)
+        f_status.pack(fill=tk.X, pady=(5, 0))
+
+        self.rec_status_var = tk.StringVar(value="就绪")
+        lbl_status = ttk.Label(f_status, textvariable=self.rec_status_var,
+                               font=("微软雅黑", 9), foreground="#6A1B9A")
+        lbl_status.pack(side=tk.LEFT)
+
+        self._rec_recommendations = {}
+
+    def _rec_browse_rtl(self):
+        path = filedialog.askopenfilename(
+            title="选择 RTL 文件",
+            filetypes=[("Verilog 文件", "*.v"), ("SystemVerilog 文件", "*.sv"),
+                       ("所有文件", "*.*")],
+            initialdir=TEST_MOCK_DIR if os.path.isdir(TEST_MOCK_DIR) else SCRIPT_DIR,
+        )
+        if path:
+            self.rec_rtl_file.set(path)
+
+    def _rec_generate(self):
+        rtl_path = self.rec_rtl_file.get()
+        if not rtl_path or not os.path.isfile(rtl_path):
+            messagebox.showerror("错误", "请选择有效的 RTL 文件")
+            return
+
+        self._set_status("生成策略推荐中...", "策略推荐")
+
+        def task():
+            try:
+                sys.path.insert(0, os.path.join(SCRIPT_DIR, 'sim', 'formal_test'))
+                from rag_integration import analyze_design_for_hardening, recommend_strategies, explain_recommendation
+
+                analysis = analyze_design_for_hardening(rtl_path, recursive=True)
+                optimization_goal = self.rec_goal.get()
+                result = recommend_strategies(analysis, optimization_goal)
+
+                for item in self.rec_tree.get_children():
+                    self.rec_tree.delete(item)
+
+                self._rec_recommendations = {}
+                for module_name, rec in result.get('recommendations', {}).items():
+                    top_strategies = [s['strategy'] for s in rec.get('top_strategies', [])]
+                    alternatives = ', '.join(top_strategies[1:]) if len(top_strategies) > 1 else '-'
+                    self.rec_tree.insert('', tk.END, values=(
+                        module_name,
+                        rec.get('module_type', 'unknown'),
+                        rec.get('recommended_strategy', 'unknown'),
+                        f"{rec.get('top_strategies', [{}])[0].get('score', 0):.2f}",
+                        alternatives,
+                    ))
+                    self._rec_recommendations[module_name] = rec
+
+                self.rec_status_var.set(f"推荐完成: {len(self._rec_recommendations)} 个模块")
+                self._set_status("策略推荐完成", f"基于 {optimization_goal} 目标")
+
+            except Exception as e:
+                self.rec_status_var.set(f"推荐失败: {str(e)}")
+                messagebox.showerror("推荐错误", f"生成策略推荐时出错:\n{str(e)}")
+
+        threading.Thread(target=task, daemon=True).start()
+
+    # ========================================================
+    # Tab 7: 加固效果可视化 (Visualization)
+    # ========================================================
+    def _build_tab_visualization(self):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text=" 效果可视化 (Visualization) ")
+
+        f_input = ttk.LabelFrame(tab, text="配置", padding=8)
+        f_input.pack(fill=tk.X, padx=5, pady=(5, 0))
+
+        row1 = ttk.Frame(f_input)
+        row1.pack(fill=tk.X, pady=2)
+        self._make_label(row1, "RTL 文件:", width=10).pack(side=tk.LEFT)
+        self.vis_rtl_file = tk.StringVar()
+        ent_rtl = ttk.Entry(row1, textvariable=self.vis_rtl_file)
+        ent_rtl.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        btn_rtl = ttk.Button(row1, text="浏览...", command=self._vis_browse_rtl, style='Browse.TButton')
+        btn_rtl.pack(side=tk.LEFT, padx=(0, 5))
+        add_tooltip(btn_rtl, "选择 RTL 文件")
+
+        row2 = ttk.Frame(f_input)
+        row2.pack(fill=tk.X, pady=2)
+        self._make_label(row2, "策略配置:", width=10).pack(side=tk.LEFT)
+        self.vis_strategy_file = tk.StringVar()
+        ent_strat = ttk.Entry(row2, textvariable=self.vis_strategy_file)
+        ent_strat.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        btn_strat = ttk.Button(row2, text="浏览...", command=self._vis_browse_strategy, style='Browse.TButton')
+        btn_strat.pack(side=tk.LEFT, padx=(0, 5))
+        add_tooltip(btn_strat, "选择策略配置 JSON 文件")
+
+        row3 = ttk.Frame(f_input)
+        row3.pack(fill=tk.X, pady=(5, 0))
+
+        btn_calc = ttk.Button(row3, text="计算指标", command=self._vis_calculate, style='Visualize.TButton')
+        btn_calc.pack(side=tk.LEFT)
+        add_tooltip(btn_calc, "计算加固效果指标")
+
+        btn_html = ttk.Button(row3, text="生成 HTML 报告", command=self._vis_generate_html, style='Export.TButton')
+        btn_html.pack(side=tk.LEFT, padx=5)
+        add_tooltip(btn_html, "生成可视化 HTML 报告")
+
+        f_stats = ttk.LabelFrame(tab, text="加固指标摘要", padding=8)
+        f_stats.pack(fill=tk.X, padx=5, pady=5)
+
+        self.vis_stats_vars = {
+            'modules': tk.StringVar(value="0"),
+            'registers': tk.StringVar(value="0"),
+            'area': tk.StringVar(value="0%"),
+            'latency': tk.StringVar(value="0 cycles"),
+            'reliability': tk.StringVar(value="★☆☆☆☆"),
+        }
+
+        stats_grid = ttk.Frame(f_stats)
+        stats_grid.pack(fill=tk.X)
+
+        labels = [
+            ('模块数', 'modules'),
+            ('寄存器数', 'registers'),
+            ('面积增加', 'area'),
+            ('延迟开销', 'latency'),
+            ('可靠性', 'reliability'),
+        ]
+
+        for i, (label, key) in enumerate(labels):
+            f = ttk.Frame(stats_grid)
+            f.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 15))
+            self._make_label(f, label, width=8).pack(anchor=tk.W)
+            lbl_val = ttk.Label(f, textvariable=self.vis_stats_vars[key],
+                               font=("微软雅黑", 14, "bold"), foreground="#006064")
+            lbl_val.pack(anchor=tk.W)
+
+        f_details = ttk.LabelFrame(tab, text="详细指标", padding=5)
+        f_details.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
+
+        columns = ('module', 'strategy', 'area', 'reliability')
+        self.vis_tree = ttk.Treeview(f_details, columns=columns, show='headings', height=10)
+        self.vis_tree.heading('module', text='模块名称')
+        self.vis_tree.heading('strategy', text='策略')
+        self.vis_tree.heading('area', text='面积开销')
+        self.vis_tree.heading('reliability', text='可靠性')
+
+        self.vis_tree.column('module', width=200)
+        self.vis_tree.column('strategy', width=120)
+        self.vis_tree.column('area', width=120, anchor=tk.CENTER)
+        self.vis_tree.column('reliability', width=120, anchor=tk.CENTER)
+
+        scroll_tree = ttk.Scrollbar(f_details, orient=tk.VERTICAL, command=self.vis_tree.yview)
+        self.vis_tree.configure(yscrollcommand=scroll_tree.set)
+        self.vis_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll_tree.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._vis_metrics = None
+
+    def _vis_browse_rtl(self):
+        path = filedialog.askopenfilename(
+            title="选择 RTL 文件",
+            filetypes=[("Verilog 文件", "*.v"), ("SystemVerilog 文件", "*.sv"),
+                       ("所有文件", "*.*")],
+            initialdir=TEST_MOCK_DIR if os.path.isdir(TEST_MOCK_DIR) else SCRIPT_DIR,
+        )
+        if path:
+            self.vis_rtl_file.set(path)
+
+    def _vis_browse_strategy(self):
+        path = filedialog.askopenfilename(
+            title="选择策略配置文件",
+            filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")],
+            initialdir=REPORTS_DIR if os.path.isdir(REPORTS_DIR) else SCRIPT_DIR,
+        )
+        if path:
+            self.vis_strategy_file.set(path)
+
+    def _vis_calculate(self):
+        rtl_path = self.vis_rtl_file.get()
+        if not rtl_path or not os.path.isfile(rtl_path):
+            messagebox.showerror("错误", "请选择有效的 RTL 文件")
+            return
+
+        self._set_status("计算加固指标中...", "计算指标")
+
+        def task():
+            try:
+                sys.path.insert(0, os.path.join(SCRIPT_DIR, 'sim', 'formal_test'))
+                from rag_integration import analyze_design_for_hardening, calculate_hardening_metrics
+
+                analysis = analyze_design_for_hardening(rtl_path, recursive=True)
+
+                strategy_file = self.vis_strategy_file.get()
+                if strategy_file and os.path.isfile(strategy_file):
+                    with open(strategy_file, 'r', encoding='utf-8') as f:
+                        config = json.load(f)
+                    module_strategy_map = config.get('module_strategies', {})
+                else:
+                    module_strategy_map = {}
+                    top_module = analysis.get('module_name', 'top')
+                    module_strategy_map[top_module] = 'tmr'
+                    for sub_name in analysis.get('submodules', {}).keys():
+                        module_strategy_map[sub_name] = 'tmr'
+
+                metrics = calculate_hardening_metrics(analysis, module_strategy_map)
+                self._vis_metrics = metrics
+
+                summary = metrics.get('summary', {})
+                self.vis_stats_vars['modules'].set(summary.get('total_modules', 0))
+                self.vis_stats_vars['registers'].set(summary.get('total_registers', 0))
+                self.vis_stats_vars['area'].set(f"{summary.get('area_increase_percent', 0):.1f}%")
+                self.vis_stats_vars['latency'].set(f"{summary.get('max_latency_cycles', 0)} cycles")
+                self.vis_stats_vars['reliability'].set(summary.get('avg_reliability_stars', '★☆☆☆☆'))
+
+                for item in self.vis_tree.get_children():
+                    self.vis_tree.delete(item)
+
+                for module_name, metrics_item in metrics.get('by_module', {}).get('area', {}).items():
+                    reliability = metrics.get('by_module', {}).get('reliability', {}).get(module_name, {})
+                    self.vis_tree.insert('', tk.END, values=(
+                        module_name,
+                        metrics_item.get('strategy', 'unknown'),
+                        f"{metrics_item.get('area_overhead', 0)}×",
+                        reliability.get('reliability_stars', '★☆☆☆☆'),
+                    ))
+
+                self._set_status("指标计算完成", "计算加固效果")
+
+            except Exception as e:
+                messagebox.showerror("计算错误", f"计算加固指标时出错:\n{str(e)}")
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _vis_generate_html(self):
+        if not self._vis_metrics:
+            messagebox.showwarning("提示", "请先计算加固指标")
+            return
+
+        try:
+            sys.path.insert(0, os.path.join(SCRIPT_DIR, 'sim', 'formal_test'))
+            from hardening_visualizer import generate_visualization_html
+
+            os.makedirs(REPORTS_DIR, exist_ok=True)
+            html_path = os.path.join(REPORTS_DIR, 'hardening_effect_report.html')
+            generate_visualization_html(self._vis_metrics, html_path)
+
+            self._set_status(f"HTML 报告已生成: {html_path}", "生成可视化报告")
+            messagebox.showinfo("生成成功", f"HTML 报告已保存至:\n{html_path}\n\n是否在浏览器中打开？")
+            os.startfile(html_path)
+
+        except Exception as e:
+            messagebox.showerror("生成错误", f"生成 HTML 报告时出错:\n{str(e)}")
+
+    # ========================================================
+    # Tab 8: 增量加固 (Incremental Hardening)
+    # ========================================================
+    def _build_tab_incremental(self):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text=" 增量加固 (Incremental) ")
+
+        f_top = ttk.Frame(tab)
+        f_top.pack(fill=tk.X, pady=(5, 0), padx=5)
+
+        self.inc_rtl_file = tk.StringVar()
+        row1 = ttk.Frame(f_top)
+        row1.pack(fill=tk.X, pady=2)
+        self._make_label(row1, "RTL 文件:").pack(side=tk.LEFT)
+        ent_rtl = ttk.Entry(row1, textvariable=self.inc_rtl_file, width=50)
+        ent_rtl.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        btn_rtl = ttk.Button(row1, text="浏览...", command=self._inc_browse_rtl)
+        btn_rtl.pack(side=tk.LEFT)
+        add_tooltip(btn_rtl, "选择 RTL 文件")
+
+        row2 = ttk.Frame(f_top)
+        row2.pack(fill=tk.X, pady=2)
+        self._make_label(row2, "输出目录:").pack(side=tk.LEFT)
+        self.inc_output_dir = tk.StringVar()
+        ent_out = ttk.Entry(row2, textvariable=self.inc_output_dir, width=50)
+        ent_out.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        btn_out = ttk.Button(row2, text="浏览...", command=self._inc_browse_output)
+        btn_out.pack(side=tk.LEFT)
+        add_tooltip(btn_out, "选择增量数据输出目录")
+
+        btn_run = ttk.Button(f_top, text="运行增量加固", command=self._inc_run)
+        btn_run.pack(side=tk.RIGHT, padx=(5, 0))
+        add_tooltip(btn_run, "运行增量加固流程")
+
+        f_result = ttk.LabelFrame(tab, text="增量分析结果", padding=5)
+        f_result.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        self.inc_result_text = scrolledtext.ScrolledText(f_result, height=15,
+                                                        font=("Consolas", 9))
+        self.inc_result_text.pack(fill=tk.BOTH, expand=True)
+
+        self._inc_module_strategy_map = {}
+
+    def _inc_browse_rtl(self):
+        path = filedialog.askopenfilename(
+            title="选择 RTL 文件",
+            filetypes=[("Verilog 文件", "*.v"), ("SystemVerilog 文件", "*.sv"),
+                       ("所有文件", "*.*")],
+            initialdir=TEST_MOCK_DIR if os.path.isdir(TEST_MOCK_DIR) else SCRIPT_DIR,
+        )
+        if path:
+            self.inc_rtl_file.set(path)
+            self.inc_output_dir.set(os.path.join(os.path.dirname(path), 'incremental_data'))
+
+    def _inc_browse_output(self):
+        path = filedialog.askdirectory(
+            title="选择输出目录",
+            initialdir=REPORTS_DIR if os.path.isdir(REPORTS_DIR) else SCRIPT_DIR,
+        )
+        if path:
+            self.inc_output_dir.set(path)
+
+    def _inc_run(self):
+        rtl_path = self.inc_rtl_file.get()
+        if not rtl_path or not os.path.isfile(rtl_path):
+            messagebox.showerror("错误", "请选择有效的 RTL 文件")
+            return
+
+        output_dir = self.inc_output_dir.get()
+        if not output_dir:
+            messagebox.showerror("错误", "请指定输出目录")
+            return
+
+        self._set_status("运行增量加固中...", "增量加固")
+
+        def task():
+            try:
+                sys.path.insert(0, os.path.join(SCRIPT_DIR, 'sim', 'formal_test'))
+                from rag_integration import analyze_design_for_hardening, run_incremental_hardening
+
+                analysis = analyze_design_for_hardening(rtl_path, recursive=True)
+                result = run_incremental_hardening(analysis, output_dir)
+
+                self._inc_result_text.delete("1.0", tk.END)
+                self._inc_result_text.insert("1.0", "=" * 60 + "\n")
+                self._inc_result_text.insert(tk.END, "增量加固分析结果\n")
+                self._inc_result_text.insert(tk.END, "=" * 60 + "\n\n")
+
+                if result.get('design_changed'):
+                    self._inc_result_text.insert(tk.END, "设计已变更，执行增量加固\n\n")
+                    self._inc_result_text.insert(tk.END, f"复用模块数: {result.get('reused_modules', 0)}\n")
+                    self._inc_result_text.insert(tk.END, f"新增模块数: {result.get('new_modules', 0)}\n")
+                    self._inc_result_text.insert(tk.END, f"移除模块数: {result.get('removed_modules', 0)}\n")
+                else:
+                    self._inc_result_text.insert(tk.END, "设计未变更，使用缓存策略\n\n")
+
+                self._inc_result_text.insert(tk.END, "\n模块策略映射:\n")
+                for module_name, strategy in sorted(result.get('module_strategy_map', {}).items()):
+                    self._inc_result_text.insert(tk.END, f"  {module_name}: {strategy}\n")
+
+                self._inc_module_strategy_map = result.get('module_strategy_map', {})
+
+                self._set_status("增量加固完成", f"处理 {len(self._inc_module_strategy_map)} 个模块")
+
+            except Exception as e:
+                self._inc_result_text.delete("1.0", tk.END)
+                self._inc_result_text.insert("1.0", f"错误: {str(e)}")
+                messagebox.showerror("增量加固错误", f"运行增量加固时出错:\n{str(e)}")
+
+        threading.Thread(target=task, daemon=True).start()
+
+    # ========================================================
+    # Tab 9: Web GUI
+    # ========================================================
+    def _build_tab_web_gui(self):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text=" Web GUI ")
+
+        f_top = ttk.Frame(tab)
+        f_top.pack(fill=tk.X, pady=(5, 0), padx=5)
+
+        self.web_rtl_file = tk.StringVar()
+        row1 = ttk.Frame(f_top)
+        row1.pack(fill=tk.X, pady=2)
+        self._make_label(row1, "RTL 文件:").pack(side=tk.LEFT)
+        ent_rtl = ttk.Entry(row1, textvariable=self.web_rtl_file, width=50)
+        ent_rtl.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        btn_rtl = ttk.Button(row1, text="浏览...", command=self._web_browse_rtl)
+        btn_rtl.pack(side=tk.LEFT)
+        add_tooltip(btn_rtl, "选择 RTL 文件")
+
+        row2 = ttk.Frame(f_top)
+        row2.pack(fill=tk.X, pady=2)
+        self._make_label(row2, "端口:").pack(side=tk.LEFT)
+        self.web_port = tk.IntVar(value=8080)
+        ent_port = ttk.Entry(row2, textvariable=self.web_port, width=10)
+        ent_port.pack(side=tk.LEFT, padx=5)
+
+        btn_start = ttk.Button(f_top, text="启动 Web GUI", command=self._web_start)
+        btn_start.pack(side=tk.RIGHT, padx=(5, 0))
+        add_tooltip(btn_start, "启动 Web 图形界面")
+
+        f_info = ttk.LabelFrame(tab, text="Web GUI 信息", padding=5)
+        f_info.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        self.web_info_text = scrolledtext.ScrolledText(f_info, height=15,
+                                                      font=("Consolas", 9))
+        self.web_info_text.pack(fill=tk.BOTH, expand=True)
+
+        self.web_info_text.insert("1.0", "Web GUI 允许您通过浏览器访问 RTL 加固工具集。\n\n")
+        self.web_info_text.insert(tk.END, "功能特性:\n")
+        self.web_info_text.insert(tk.END, "  • 模块层次结构可视化\n")
+        self.web_info_text.insert(tk.END, "  • 模块级策略配置\n")
+        self.web_info_text.insert(tk.END, "  • 实时策略 JSON 预览\n")
+        self.web_info_text.insert(tk.END, "  • 一键运行加固\n\n")
+        self.web_info_text.insert(tk.END, "使用步骤:\n")
+        self.web_info_text.insert(tk.END, "  1. 选择 RTL 文件\n")
+        self.web_info_text.insert(tk.END, "  2. 点击 \"启动 Web GUI\"\n")
+        self.web_info_text.insert(tk.END, "  3. 在浏览器中访问显示的 URL\n")
+
+        self._web_gui_instance = None
+
+    def _web_browse_rtl(self):
+        path = filedialog.askopenfilename(
+            title="选择 RTL 文件",
+            filetypes=[("Verilog 文件", "*.v"), ("SystemVerilog 文件", "*.sv"),
+                       ("所有文件", "*.*")],
+            initialdir=TEST_MOCK_DIR if os.path.isdir(TEST_MOCK_DIR) else SCRIPT_DIR,
+        )
+        if path:
+            self.web_rtl_file.set(path)
+
+    def _web_start(self):
+        rtl_path = self.web_rtl_file.get()
+        if not rtl_path or not os.path.isfile(rtl_path):
+            messagebox.showerror("错误", "请选择有效的 RTL 文件")
+            return
+
+        port = self.web_port.get()
+        if port < 1 or port > 65535:
+            messagebox.showerror("错误", "请输入有效的端口号 (1-65535)")
+            return
+
+        self._set_status("启动 Web GUI 中...", "启动 Web GUI")
+
+        def task():
+            try:
+                sys.path.insert(0, os.path.join(SCRIPT_DIR, 'sim', 'formal_test'))
+                from rag_integration import analyze_design_for_hardening, open_web_gui
+
+                analysis = analyze_design_for_hardening(rtl_path, recursive=True)
+
+                module_strategy_map = {}
+                top_module = analysis.get('module_name', 'top')
+                module_strategy_map[top_module] = 'tmr'
+                for sub_name in analysis.get('submodules', {}).keys():
+                    module_strategy_map[sub_name] = 'tmr'
+
+                self._web_gui_instance = open_web_gui(analysis, module_strategy_map, None, port)
+
+                if self._web_gui_instance:
+                    self.web_info_text.delete("1.0", tk.END)
+                    self.web_info_text.insert("1.0", f"Web GUI 已启动!\n\n")
+                    self.web_info_text.insert(tk.END, f"URL: http://localhost:{port}\n")
+                    self.web_info_text.insert(tk.END, f"RTL 文件: {rtl_path}\n")
+                    self.web_info_text.insert(tk.END, f"模块数: {len(module_strategy_map)}\n\n")
+                    self.web_info_text.insert(tk.END, "Web GUI 运行在后台线程中。\n")
+                    self.web_info_text.insert(tk.END, "关闭此窗口将停止 Web GUI。")
+                    self._set_status(f"Web GUI 已启动: http://localhost:{port}", "Web GUI")
+                else:
+                    messagebox.showerror("启动失败", "Web GUI 模块不可用")
+
+            except Exception as e:
+                messagebox.showerror("启动错误", f"启动 Web GUI 时出错:\n{str(e)}")
+
+        threading.Thread(target=task, daemon=True).start()
+
+    # ========================================================
+    # Tab 10: 报告 (Reports)
     # ========================================================
     def _build_tab_reports(self):
         tab = ttk.Frame(self.notebook)
