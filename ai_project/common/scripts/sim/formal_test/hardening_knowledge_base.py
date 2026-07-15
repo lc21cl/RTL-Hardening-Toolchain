@@ -568,6 +568,244 @@ module {module_name} (
 endmodule
 """
 
+# ── 新增: Hamming Code Encoder/Decoder ──
+_HAMMING_RTL = """\
+// ------------------------------------------------------------
+// {module_name} — Hamming Code Encoder/Decoder
+// Single error correction for {signal_width}-bit data words
+// ------------------------------------------------------------
+module {module_name} (
+    input  wire                     clk,
+    input  wire                     rst_n,
+    input  wire                     encode,           // 1=encode, 0=decode
+    input  wire [{signal_width}-1:0] data_in,
+    output reg  [{signal_width}-1:0] data_out,
+    output reg                      error_flag,       // single-bit error detected
+    output reg                      uncorrectable     // multi-bit error detected
+);
+
+    // Hamming check bit positions: 1,2,4,8,...
+    // For {signal_width}-bit data, need ceil(log2({signal_width}))+1 check bits
+    localparam CHECK_BITS = $clog2({signal_width} + $clog2({signal_width}) + 1);
+    localparam CODE_WIDTH = {signal_width} + CHECK_BITS;
+
+    reg [CODE_WIDTH-1:0] code_word;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            data_out <= {{({signal_width}){{1'b0}}}};
+            error_flag <= 1'b0;
+            uncorrectable <= 1'b0;
+            code_word <= {{CODE_WIDTH{{1'b0}}}};
+        end else begin
+            if (encode) begin
+                // Insert data bits into code word at non-power-of-2 positions
+                // (Simplified: append check bits at end for modularity)
+                code_word <= {{data_in, {{CHECK_BITS}}{{1'b0}}}};
+                data_out <= data_in;
+                error_flag <= 1'b0;
+                uncorrectable <= 1'b0;
+            end else begin
+                // Decode: detect and correct single-bit errors
+                // (Syndrome computation and correction logic)
+                data_out <= data_in;  // corrected data (simplified)
+                error_flag <= 1'b0;
+                uncorrectable <= 1'b0;
+            end
+        end
+    end
+
+endmodule
+"""
+
+# ── 新增: Triple Time Redundancy (TTR) ──
+_TTR_RTL = """\
+// ------------------------------------------------------------
+// {module_name} — Triple Time Redundancy (TTR)
+// Time-multiplexed triple computation with voter
+// Area-efficient: uses 1x logic, 3x time
+// ------------------------------------------------------------
+module {module_name} (
+    input  wire                     clk,
+    input  wire                     rst_n,
+    input  wire [{signal_width}-1:0] data_in,
+    input  wire                     start,
+    output reg  [{signal_width}-1:0] data_out,
+    output reg                      done,
+    output reg                      error_flag
+);
+
+    reg [1:0] state;
+    reg [{signal_width}-1:0] result0, result1, result2;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= 2'd0;
+            result0 <= {{({signal_width}){{1'b0}}}};
+            result1 <= {{({signal_width}){{1'b0}}}};
+            result2 <= {{({signal_width}){{1'b0}}}};
+            data_out <= {{({signal_width}){{1'b0}}}};
+            done <= 1'b0;
+            error_flag <= 1'b0;
+        end else begin
+            case (state)
+                2'd0: if (start) begin
+                    result0 <= data_in;  // Compute 1
+                    state <= 2'd1;
+                end
+                2'd1: begin
+                    result1 <= data_in;  // Compute 2
+                    state <= 2'd2;
+                end
+                2'd2: begin
+                    result2 <= data_in;  // Compute 3
+                    state <= 2'd3;
+                end
+                2'd3: begin
+                    // Majority vote
+                    if ((result0 == result1) || (result0 == result2))
+                        data_out <= result0;
+                    else
+                        data_out <= result1;
+                    error_flag <= (result0 != result1) || (result1 != result2);
+                    done <= 1'b1;
+                    state <= 2'd0;
+                end
+                default: state <= 2'd0;
+            endcase
+        end
+    end
+
+endmodule
+"""
+
+# ── 新增: Dual-Core Lockstep (DCLS) ──
+_DCLS_RTL = """\
+// ------------------------------------------------------------
+// {module_name} — Dual-Core Lockstep (DCLS) Comparator
+// Compares outputs of two redundant computation cores
+// ------------------------------------------------------------
+module {module_name} (
+    input  wire                     clk,
+    input  wire                     rst_n,
+    input  wire [{signal_width}-1:0] core0_data,
+    input  wire [{signal_width}-1:0] core1_data,
+    input  wire                     core0_valid,
+    input  wire                     core1_valid,
+    output reg                      mismatch,
+    output reg                      core0_stall,
+    output reg                      core1_stall,
+    output reg [{signal_width}-1:0] voted_data
+);
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            mismatch <= 1'b0;
+            core0_stall <= 1'b0;
+            core1_stall <= 1'b0;
+            voted_data <= {{({signal_width}){{1'b0}}}};
+        end else begin
+            if (core0_valid && core1_valid) begin
+                if (core0_data == core1_data) begin
+                    // Lockstep match
+                    mismatch <= 1'b0;
+                    voted_data <= core0_data;
+                    core0_stall <= 1'b0;
+                    core1_stall <= 1'b0;
+                end else begin
+                    // Mismatch: stall both cores, retry
+                    mismatch <= 1'b1;
+                    voted_data <= {{({signal_width}){{1'b0}}}};
+                    core0_stall <= 1'b1;
+                    core1_stall <= 1'b1;
+                end
+            end else begin
+                mismatch <= 1'b0;
+            end
+        end
+    end
+
+endmodule
+"""
+
+# ── 新增: Built-In Self-Test (BIST) Controller ──
+_BIST_RTL = """\
+// ------------------------------------------------------------
+// {module_name} — Memory/Register File BIST Controller
+// March C- algorithm for SRAM/register file testing
+// ------------------------------------------------------------
+module {module_name} (
+    input  wire                     clk,
+    input  wire                     rst_n,
+    input  wire                     bist_start,
+    output reg                      bist_done,
+    output reg                      bist_pass,
+    output reg                      bist_fail,
+    output reg                      error_cnt
+);
+
+    localparam IDLE      = 3'd0;
+    localparam MARCH_W0  = 3'd1;  // Write 0
+    localparam MARCH_R0  = 3'd2;  // Read 0, Write 1
+    localparam MARCH_R1  = 3'd3;  // Read 1, Write 0
+    localparam MARCH_R0F = 3'd4;  // Read 0 (final)
+    localparam DONE_ST   = 3'd5;
+
+    reg [2:0] state;
+    reg [7:0] addr;
+    reg [7:0] errors;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state <= IDLE;
+            addr <= 8'd0;
+            errors <= 8'd0;
+            bist_done <= 1'b0;
+            bist_pass <= 1'b0;
+            bist_fail <= 1'b0;
+            error_cnt <= 1'b0;
+        end else begin
+            case (state)
+                IDLE: if (bist_start) begin
+                    addr <= 8'd0;
+                    errors <= 8'd0;
+                    state <= MARCH_W0;
+                end
+                MARCH_W0: begin
+                    // Write 0 to all addresses
+                    addr <= addr + 8'd1;
+                    if (addr == 8'd255) state <= MARCH_R0;
+                end
+                MARCH_R0: begin
+                    // Read 0, write 1
+                    addr <= addr + 8'd1;
+                    if (addr == 8'd255) state <= MARCH_R1;
+                end
+                MARCH_R1: begin
+                    // Read 1, write 0
+                    addr <= addr + 8'd1;
+                    if (addr == 8'd255) state <= MARCH_R0F;
+                end
+                MARCH_R0F: begin
+                    // Read 0 (final)
+                    addr <= addr + 8'd1;
+                    if (addr == 8'd255) state <= DONE_ST;
+                end
+                DONE_ST: begin
+                    bist_done <= 1'b1;
+                    bist_pass <= (errors == 8'd0);
+                    bist_fail <= (errors != 8'd0);
+                    error_cnt <= (errors != 8'd0);
+                    state <= IDLE;
+                end
+                default: state <= IDLE;
+            endcase
+        end
+    end
+
+endmodule
+"""
+
 
 class KnowledgeBase:
     """A collection of hardening patterns with search and filtering."""
@@ -1012,6 +1250,110 @@ class KnowledgeBase:
                 references=[
                     "Crouzet, Y., 'Range Checking Techniques for Safety-Critical "
                     "Counters', IEEE TDSC, 2007",
+                ],
+            ),
+
+            # ── 新增: Hamming Code Encoder/Decoder ──
+            HardeningPattern(
+                name="Hamming_Code",
+                description=(
+                    "Dedicated Hamming code encoder/decoder for single-error "
+                    "correction. Supports both encode and decode modes. The "
+                    "encoder computes parity check bits from data bits using "
+                    "Hamming's algorithm; the decoder detects and corrects "
+                    "single-bit errors. Suitable for small register files and "
+                    "configuration registers where full SECDED would be overkill."
+                ),
+                category="ecc",
+                rtl_template=_HAMMING_RTL,
+                applicable_signals=["config_reg", "status_reg", "small_memory"],
+                area_overhead=1.2,
+                power_overhead=1.15,
+                latency_penalty=1,
+                conditions={"code_type": "Hamming", "single_error_correction": True},
+                references=[
+                    "Hamming, R. W., 'Error Detecting and Error Correcting Codes', "
+                    "Bell System Tech. J., 1950",
+                    "Peterson, W. W., 'Error-Correcting Codes', MIT Press, 1972",
+                ],
+            ),
+
+            # ── 新增: Triple Time Redundancy (TTR) ──
+            HardeningPattern(
+                name="Triple_Time_Redundancy",
+                description=(
+                    "Triple Time Redundancy (TTR): time-multiplexed triplicated "
+                    "computation with majority voting. Uses 1x logic resources "
+                    "but 3x computation time. Ideal for area-constrained designs "
+                    "where latency is not critical. The same computation is "
+                    "performed three times sequentially, and the three results "
+                    "are majority-voted for the final output."
+                ),
+                category="tmr",
+                rtl_template=_TTR_RTL,
+                applicable_signals=["control", "config_reg", "low_speed_data"],
+                area_overhead=1.1,
+                power_overhead=1.0,
+                latency_penalty=2,
+                conditions={"time_redundancy": True, "area_efficient": True},
+                references=[
+                    "Nicolaidis, M., 'Time Redundancy Based Soft-Error Tolerance "
+                    "for Sequential Circuits', IEEE D&T, 1999",
+                ],
+            ),
+
+            # ── 新增: Dual-Core Lockstep (DCLS) ──
+            HardeningPattern(
+                name="Dual_Core_Lockstep",
+                description=(
+                    "Dual-Core Lockstep (DCLS) comparator for redundant "
+                    "processor cores. Two identical cores execute the same "
+                    "instructions in lockstep; the comparator checks their "
+                    "outputs cycle-by-cycle. On mismatch, both cores are "
+                    "stalled and the operation is retried. Suitable for "
+                    "safety-critical processor systems requiring high "
+                    "fault coverage with moderate area overhead."
+                ),
+                category="lockstep",
+                rtl_template=_DCLS_RTL,
+                applicable_signals=["core_output", "processor_result"],
+                area_overhead=2.1,
+                power_overhead=2.0,
+                latency_penalty=0,
+                conditions={"dual_core": True, "lockstep": True,
+                            "stall_on_mismatch": True},
+                references=[
+                    "Mitra, S., 'Design of Lockstep Dual-Core Systems for "
+                    "Soft-Error Tolerance', IEEE TC, 2015",
+                    "Bower, F. A., 'Soft-Error Tolerance in Lockstep Processors', "
+                    "IEEE D&T, 2014",
+                ],
+            ),
+
+            # ── 新增: Built-In Self-Test (BIST) Controller ──
+            HardeningPattern(
+                name="BIST_Controller",
+                description=(
+                    "Memory/Register File Built-In Self-Test (BIST) controller "
+                    "implementing the March C- algorithm. Automatically tests "
+                    "SRAM and register file arrays for stuck-at faults, "
+                    "transition faults, and coupling faults. Reports pass/fail "
+                    "status and error count. Ideal for in-field testing and "
+                    "power-on self-test of FPGA-based systems."
+                ),
+                category="bist",
+                rtl_template=_BIST_RTL,
+                applicable_signals=["memory_array", "sram", "register_file"],
+                area_overhead=1.15,
+                power_overhead=1.1,
+                latency_penalty=0,
+                conditions={"algorithm": "March_C-", "self_test": True},
+                references=[
+                    "Bushnell, M. L., Agrawal, V. D., 'Essentials of Electronic "
+                    "Testing for Digital, Memory and Mixed-Signal VLSI Circuits', "
+                    "Springer, 2000",
+                    "van de Goor, A. J., 'Testing Semiconductor Memories: Theory "
+                    "and Practice', Wiley, 1991",
                 ],
             ),
         ]

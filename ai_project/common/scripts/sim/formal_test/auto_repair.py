@@ -715,6 +715,32 @@ class SyntaxFixer:
         (40, "double_semicolon",
          r';;',
          r';'),
+
+        # ── v3.4 新增: 4 种常见模式 ──
+
+        # Missing semicolon before 'end' keyword
+        # e.g., "data <= value" followed by "end" → "data <= value;"
+        (85, "missing_semicolon_before_end",
+         r'([^;])\s*\n\s*end\b',
+         r'\1;\nend'),
+
+        # Inout port missing 'wire' keyword (non-range variant)
+        # e.g., "inout data;" → "inout wire data;"
+        (70, "inout_missing_wire",
+         r'(inout)\s+(?!wire|reg)(\w[\w\[\]\d]*)\s*;',
+         r'\1 wire \2;'),
+
+        # Missing 'reg' for output used in always block (without range)
+        # e.g., "output data;" used in "always @(posedge clk)" → "output reg data;"
+        (65, "output_reg_type_simple",
+         r'(output)\s+(?!reg\b)(\w[\w\d]*)\s*[,;]',
+         r'\1 reg \2\3'),
+
+        # Stray trailing backslash (line continuation in non-continuation context)
+        # e.g., signal declaration lines ending with '\' 
+        (30, "stray_backslash",
+         r'([^\\])\\\s*\n',
+         r'\1\n'),
     ]
 
     _FIX_PATTERNS.sort(key=lambda x: -x[0])  # highest priority first

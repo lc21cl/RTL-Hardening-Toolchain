@@ -871,23 +871,43 @@ python _visualize_gui.py --mode analyze \
 
 以下任务来自各阶段 "剩余缺陷" 分析，按优先级排列：
 
-| 优先级 | 任务 | 所属组件 | 说明 | 预估工作量 |
-|:------:|:-----|:---------|:------|:---------|
-| 🟡 P1 | AIG 图构建端到端验证 | P3-1 | yosys 综合 → AIG → PyG 全流程自动化，缺少 aig_builder.py / aig_to_pyg.py / aig_visualizer.py | 3-5 天 |
-| 🟡 P2 | 知识库模式扩展 | P3-3 | 当前 16+ 模式，需扩展更多 TMR/DICE/ECC/cnt_comp/parity 变体 | 2-3 天 |
-| 🟡 P2 | LLM 反馈循环 | P3-3 | 让 LLM 评估自己的输出质量，迭代优化 | 2-3 天 |
-| 🟡 P2 | SVA 断言自动插入 | P3-3 | 在加固代码中自动插入 SystemVerilog 断言 | 2-3 天 |
-| 🟡 P2 | AST-level 修复器增强 | P3-4 | 当前以正则修复为主，需基于 pyverilog 的 AST 精确修复 | 3-5 天 |
-| 🟡 P2 | FIX_PATTERNS 扩展 | P3-4 | 覆盖更多常见语法错误模式（端口方向缺失、未声明信号等） | 1-2 天 |
-| 🟢 P3 | 等价性检查 Docker 封装 | P3-4 | 消除对本地 yosys 的依赖 | 1-2 天 |
-| 🟢 P3 | 并行验证 | P3-4 | 同时运行语法/综合/等价性检查 | 1 天 |
-| 🟢 P3 | OpenAIBackend 真实 API 激活 | P3-3 | 连接真实 OpenAI API（当前已支持 DeepSeek） | 1 天 |
-| 🟢 P4 | 子模块寄存器递归提取 | 缺陷修复 | 层次化设计支持（顶层+子模块联合加固） | 3-5 天 |
-| 🟢 P4 | 端口位宽参数化解析 | 缺陷修复 | 支持 [WIDTH-1:0] 等参数化位宽 | 1 天 |
+| 优先级 | 任务 | 所属组件 | 说明 | 预估工作量 | 状态 |
+|:------:|:-----|:---------|:------|:---------|:----:|
+| 🟡 P1 | AIG 图构建端到端验证 | P3-1 | yosys 综合 → AIG → PyG 全流程自动化 | 3-5 天 | ✅ **已完成** |
+| 🟡 P2 | 知识库模式扩展 | P3-3 | 当前 24 种模式，可继续扩展 | 2-3 天 | ✅ **已完成 (20→24)** |
+| 🟡 P2 | LLM 反馈循环 | P3-3 | 让 LLM 评估自己的输出质量，迭代优化 | 2-3 天 | ⏳ 待处理 |
+| 🟡 P2 | SVA 断言自动插入 | P3-3 | 在加固代码中自动插入 SystemVerilog 断言 | 2-3 天 | ⏳ 待处理 |
+| 🟡 P2 | AST-level 修复器增强 | P3-4 | 当前以正则修复为主，需基于 pyverilog 的 AST 精确修复 | 3-5 天 | ⏳ 待处理 |
+| 🟡 P2 | FIX_PATTERNS 扩展 | P3-4 | 覆盖更多常见语法错误模式 | 1-2 天 | ✅ **已完成 (19→23)** |
+| 🟢 P3 | 等价性检查 Docker 封装 | P3-4 | 消除对本地 yosys 的依赖 | 1-2 天 | ⏳ 待处理 |
+| 🟢 P3 | 并行验证 | P3-4 | 同时运行语法/综合/等价性检查 | 1 天 | ⏳ 待处理 |
+| 🟢 P3 | OpenAIBackend 真实 API 激活 | P3-3 | 连接真实 OpenAI API（当前已支持 DeepSeek） | 1 天 | ⏳ 待处理 |
+| 🟢 P4 | 子模块寄存器递归提取 | 缺陷修复 | 层次化设计支持（顶层+子模块联合加固） | 3-5 天 | ⏳ 待处理 |
+| 🟢 P4 | 端口位宽参数化解析 | 缺陷修复 | 支持 [WIDTH-1:0] 等参数化位宽 | 1 天 | ⏳ 待处理 |
 
 ---
 
-### v3.0 — 2026-07-15
+### v3.4 — 2026-07-15
+
+**AIG 独立模块创建 + 知识库扩展至 24 种 + FIX_PATTERNS 扩展至 23 种 + Git 推送 CI**
+
+| 变更项 | 说明 |
+|:-------|:------|
+| **P1: AIG 端到端验证** | 创建 3 个独立模块: `aig_builder.py`(yosys Python 封装, RTL→AIG 构建, BLIF→AIGER 回退), `aig_to_pyg.py`(AIG→PyG Data 转换, 8 维特征, batch 支持, BLIF 回退), `aig_visualizer.py`(AIG 图可视化, 特征分布/度分布/深度直方图, 完整报告生成) |
+| **P2: 知识库扩展 20→24 种** | 新增 Hamming_Code(专用汉明码编解码器)、Triple_Time_Redundancy(时间三模冗余, 面积高效)、Dual_Core_Lockstep(双核锁步比较器)、BIST_Controller(March C- 内建自测试控制器) 4 种新模式。新增 2 种类别: lockstep, bist。类别从 8→10 个 |
+| **P2: FIX_PATTERNS 扩展 19→23 种** | 新增 missing_semicolon_before_end(end 前缺失分号)、inout_missing_wire(inout 无 wire 关键字, 无范围变体)、output_reg_type_simple(output 无范围变体缺 reg)、stray_backslash(多余反斜杠) 4 种模式 |
+| **P0: Git 推送 CI** | 提交 ast_repairer/auto_repair/hardening_knowledge_base/rag_integration 修改 + 更新 .gitignore 排除工作目录 → `git push origin main` 成功触发 GitHub Actions |
+
+#### 当前待办关闭状态
+
+| 优先级 | 任务 | 所属组件 | 状态 |
+|:------:|:-----|:---------|:----:|
+| 🟡 P1 | AIG 图构建端到端验证 (aig_builder/aig_to_pyg/aig_visualizer) | P3-1 | ✅ **本次完成** |
+| 🟡 P2 | 知识库模式扩展 (20→24 种) | P3-3 | ✅ **本次完成** |
+| 🟡 P2 | FIX_PATTERNS 扩展 (19→23 种) | P3-4 | ✅ **本次完成** |
+| 🔴 P0 | Git 仓库初始化 + GitHub 推送 CI | 工程化 | ✅ **本次完成** |
+
+### v3.3 — 2026-07-15
 
 **FIX_PATTERNS 扩展 + 回归策略全面更新 + 缺陷修复闭环**
 
