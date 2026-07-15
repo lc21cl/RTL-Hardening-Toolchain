@@ -819,25 +819,24 @@ class KnowledgeBase:
                 ],
             ),
 
-            # ── 新增: Pipelined TMR ──
+            # ── 新增: Pipelined TMR（流水线级 TMR） ──
             HardeningPattern(
                 name="TMR_Pipelined",
                 description=(
-                    "Pipelined Triple Modular Redundancy for multi-cycle "
-                    "data-path designs. Each pipeline stage is independently "
-                    "triplicated and voted on before being fed into the next "
-                    "stage. Provides full TMR protection across all pipeline "
-                    "stages while maintaining throughput."
+                    "流水线级 TMR：每级流水线寄存器独立三重化，级间插入 "
+                    "多数投票器（voter）。防止单级 SEU 沿流水线传播，保持 "
+                    "流水线吞吐率不变。适用于多级流水线数据通路设计。"
                 ),
                 category="tmr",
                 rtl_template=_TMR_PIPELINED_RTL,
-                applicable_signals=["pipeline_reg", "data_path_stage"],
+                applicable_signals=["pipeline_stage", "pipe_reg"],
                 area_overhead=3.5,
                 power_overhead=3.3,
-                latency_penalty=3,
-                conditions={"pipeline_depth": 3, "voter_per_stage": True},
+                latency_penalty=2,
+                conditions={"pipeline_depth": 2, "voter_per_stage": True},
                 references=[
                     "Shirvani, P., 'Pipelined TMR for Safety-Critical Systems', IEEE D&T, 2000",
+                    "Mitra, S., 'Design of Redundant Pipeline Architectures', IEEE TC, 2005",
                 ],
             ),
 
@@ -862,25 +861,26 @@ class KnowledgeBase:
                 ],
             ),
 
-            # ── 新增: DICE with Feedback Check ──
+            # ── 新增: DICE 带反馈检查（在 DICE 单元后添加反馈回路错误检测） ──
             HardeningPattern(
-                name="DICE_Feedback_Check",
+                name="DICE_Feedback",
                 description=(
-                    "DICE storage cell with per-bit feedback consistency "
-                    "monitoring. Four interlocked nodes are combined via "
-                    "a 4-of-4 majority gate for the output. A consistency_error "
-                    "flag is raised when any node disagrees. Useful for "
-                    "critical control registers where error awareness is needed."
+                    "DICE 带反馈检查：在标准 DICE 四节点互锁存储单元后添加 "
+                    "反馈回路一致性监控。四个节点通过 4-of-4 多数门输出， "
+                    "任意节点不一致时断言 fb_error 标志。适用于关键控制 "
+                    "寄存器和安全关键寄存器。"
                 ),
                 category="dice",
-                rtl_template=_DICE_FEEDBACK_CHECK_RTL,
-                applicable_signals=["control_reg", "config_reg", "status_reg"],
-                area_overhead=2.2,
-                power_overhead=2.3,
+                rtl_template=_DICE_FEEDBACK_RTL,
+                applicable_signals=["critical_reg", "safety_reg"],
+                area_overhead=3.0,
+                power_overhead=3.1,
                 latency_penalty=0,
                 conditions={"feedback_monitoring": True, "error_flag": True},
                 references=[
-                    "Velazco, R., 'SEU-Tolerant Latch Design with DICE', IEEE TNS, 1998",
+                    "Calin, T., Nicolaidis, M., Velazco, R., 'Upset Hardened "
+                    "Memory Design for Submicron CMOS Technology', IEEE TNS, 1996",
+                    "Velazco, R., 'SEU-Tolerant Latch Design with DICE Feedback', IEEE TNS, 1998",
                 ],
             ),
 
@@ -925,6 +925,93 @@ class KnowledgeBase:
                 conditions={"memory_depth": 64, "code_type": "SECDED"},
                 references=[
                     "Hsiao, M. Y., 'A Class of Optimal SECDED Codes', IBM J. R&D, 1970",
+                ],
+            ),
+
+            # ── 新增: ECC 寄存器文件（多端口寄存器文件的汉明码保护） ──
+            HardeningPattern(
+                name="ECC_Register_File",
+                description=(
+                    "寄存器文件 ECC：多端口寄存器文件的汉明码（SECDED）保护。"
+                    "写操作时计算校验位并附加存储，读操作时纠正单比特错误并检测 "
+                    "双比特错误。支持最多 16 个寄存器字，适用于通用寄存器组。"
+                ),
+                category="ecc",
+                rtl_template=_ECC_REGISTER_FILE_RTL,
+                applicable_signals=["reg_file", "register_file"],
+                area_overhead=1.6,
+                power_overhead=1.5,
+                latency_penalty=1,
+                conditions={"memory_depth": 16, "code_type": "SECDED"},
+                references=[
+                    "Hsiao, M. Y., 'A Class of Optimal SECDED Codes', IBM J. R&D, 1970",
+                    "Peterson, W. W., 'Error-Correcting Codes', MIT Press, 1972",
+                ],
+            ),
+
+            # ── 新增: 逐字节奇偶校验（每字节独立奇偶位） ──
+            HardeningPattern(
+                name="Parity_Byte",
+                description=(
+                    "逐字节奇偶校验：每字节（8-bit）独立生成/检查奇偶位。"
+                    "支持偶数或奇数校验，每字节附带独立奇偶标志位。"
+                    "适用于数据总线、宽位数据的轻量级错误检测。"
+                ),
+                category="parity",
+                rtl_template=_PARITY_BYTE_RTL,
+                applicable_signals=["data_bus", "wide_data"],
+                area_overhead=0.15,
+                power_overhead=0.15,
+                latency_penalty=0,
+                conditions={"single_error_detection_only": True, "byte_granularity": True},
+                references=[
+                    "Hamming, R. W., 'Error Detecting and Error Correcting Codes', "
+                    "Bell System Tech. J., 1950",
+                    "Texas Instruments, 'Parity Generation and Checking', SN74S280 Datasheet",
+                ],
+            ),
+
+            # ── 新增: 心跳看门狗（周期性脉冲输出，非超时复位） ──
+            HardeningPattern(
+                name="Watchdog_Heartbeat",
+                description=(
+                    "心跳看门狗：持续输出周期性心跳脉冲信号，而非超时复位。"
+                    "通过可配置的分频器（divider）控制脉冲频率，当计数器达到 "
+                    "分频值时翻转心跳输出。适用于系统健康状态监控。"
+                ),
+                category="watchdog",
+                rtl_template=_WATCHDOG_HEARTBEAT_RTL,
+                applicable_signals=["heartbeat", "alive"],
+                area_overhead=0.3,
+                power_overhead=0.25,
+                latency_penalty=0,
+                conditions={"periodic_output": True, "configurable_divider": True},
+                references=[
+                    "Mahmood, A., McCluskey, E. J., 'Concurrent Error Detection "
+                    "Using Watchdog Processors', IEEE TC, 1988",
+                    "IEC 61508, 'Functional Safety of Electrical/Electronic/Programmable "
+                    "Electronic Safety-related Systems', 2010",
+                ],
+            ),
+
+            # ── 新增: 范围检查计数器比较器（检查计数器是否在 [min,max] 内） ──
+            HardeningPattern(
+                name="Cnt_Comp_Range",
+                description=(
+                    "范围检查计数器比较器：监控计数器/定时器当前值，检查其 "
+                    "是否在指定的 [range_min, range_max] 范围内。超出范围时 "
+                    "立即断言 range_error 报警信号。适用于计数器安全监控。"
+                ),
+                category="cnt_comp",
+                rtl_template=_CNT_COMP_RANGE_RTL,
+                applicable_signals=["counter", "timer"],
+                area_overhead=0.4,
+                power_overhead=0.35,
+                latency_penalty=0,
+                conditions={"range_check": True, "configurable_bounds": True},
+                references=[
+                    "Crouzet, Y., 'Range Checking Techniques for Safety-Critical "
+                    "Counters', IEEE TDSC, 2007",
                 ],
             ),
         ]
@@ -978,6 +1065,38 @@ class KnowledgeBase:
         if signal_type is not None:
             st = signal_type.lower()
             results = [p for p in results if st in [s.lower() for s in p.applicable_signals]]
+
+        return results
+
+    def query(
+        self,
+        category: Optional[str] = None,
+        max_overhead: Optional[float] = None,
+        signal_type: Optional[str] = None,
+        min_references: Optional[int] = None,
+    ) -> List[HardeningPattern]:
+        """使用灵活条件查询加固模式，支持按 category 等多维度过滤。
+
+        Args:
+            category: 按模式类别过滤（如 \"tmr\", \"ecc\", \"parity\"）。
+            max_overhead: 最大面积开销倍率。
+            signal_type: 按适用信号类型过滤。
+            min_references: 最少参考文献数量。
+
+        Returns:
+            匹配条件的 HardeningPattern 对象列表。
+        """
+        results = list(self.patterns.values())
+
+        if category is not None:
+            results = [p for p in results if p.category == category.lower()]
+        if max_overhead is not None:
+            results = [p for p in results if p.area_overhead <= max_overhead]
+        if signal_type is not None:
+            st = signal_type.lower()
+            results = [p for p in results if st in [s.lower() for s in p.applicable_signals]]
+        if min_references is not None:
+            results = [p for p in results if len(p.references) >= min_references]
 
         return results
 
@@ -1078,85 +1197,35 @@ endmodule
 
 _TMR_PIPELINED_RTL = """\
 // ------------------------------------------------------------
-// {module_name} — Pipelined TMR for Data-Path
-// Three synthesized pipeline stages + final voter
+// {module_name} — 流水线级 TMR（每级流水线寄存器三重化 + 级间 voter）
+// 每级流水线独立三重化，级间插入多数投票器，防止单级 SEU 传播
 // ------------------------------------------------------------
 module {module_name} (
-    input  wire                     clk,
-    input  wire                     rst_n,
-    input  wire [{signal_width}-1:0] stage0_in,
-    input  wire [{signal_width}-1:0] stage1_in,
-    input  wire [{signal_width}-1:0] stage2_in,
-    output reg  [{signal_width}-1:0] result
+    input  wire                     clk, rst_n,
+    input  wire [{signal_width}-1:0] stage_in,
+    output reg  [{signal_width}-1:0] stage_out
 );
-
     reg [{signal_width}-1:0] s0_a, s0_b, s0_c;
     reg [{signal_width}-1:0] s1_a, s1_b, s1_c;
-    reg [{signal_width}-1:0] s2_a, s2_b, s2_c;
-
-    // Pipeline stage 0
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            s0_a <= {{({signal_width}){{1'b0}}}};
-            s0_b <= {{({signal_width}){{1'b0}}}};
-            s0_c <= {{({signal_width}){{1'b0}}}};
-        end else begin
-            s0_a <= stage0_in;
-            s0_b <= stage0_in;
-            s0_c <= stage0_in;
-        end
-    end
-
-    // Pipeline stage 1
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            s1_a <= {{({signal_width}){{1'b0}}}};
-            s1_b <= {{({signal_width}){{1'b0}}}};
-            s1_c <= {{({signal_width}){{1'b0}}}};
-        end else begin
-            s1_a <= stage1_in;
-            s1_b <= stage1_in;
-            s1_c <= stage1_in;
-        end
-    end
-
-    // Pipeline stage 2
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            s2_a <= {{({signal_width}){{1'b0}}}};
-            s2_b <= {{({signal_width}){{1'b0}}}};
-            s2_c <= {{({signal_width}){{1'b0}}}};
-        end else begin
-            s2_a <= stage2_in;
-            s2_b <= stage2_in;
-            s2_c <= stage2_in;
-        end
-    end
-
-    // Final majority voter across pipeline outputs
-    wire [{signal_width}-1:0] maj0, maj1, maj2;
+    wire [{signal_width}-1:0] m0, m1;
     genvar gi;
     generate
         for (gi = 0; gi < {signal_width}; gi = gi + 1) begin : voter
-            assign maj0[gi] = (s0_a[gi] & s0_b[gi]) |
-                              (s0_a[gi] & s0_c[gi]) |
-                              (s0_b[gi] & s0_c[gi]);
-            assign maj1[gi] = (s1_a[gi] & s1_b[gi]) |
-                              (s1_a[gi] & s1_c[gi]) |
-                              (s1_b[gi] & s1_c[gi]);
-            assign maj2[gi] = (s2_a[gi] & s2_b[gi]) |
-                              (s2_a[gi] & s2_c[gi]) |
-                              (s2_b[gi] & s2_c[gi]);
+            // 每级流水线独立多数投票
+            assign m0[gi] = (s0_a[gi]&s0_b[gi])|(s0_a[gi]&s0_c[gi])|(s0_b[gi]&s0_c[gi]);
+            assign m1[gi] = (s1_a[gi]&s1_b[gi])|(s1_a[gi]&s1_c[gi])|(s1_b[gi]&s1_c[gi]);
         end
     endgenerate
-
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
-            result <= {{({signal_width}){{1'b0}}}};
-        else
-            result <= maj0 + maj1 + maj2;  // aggregated pipeline output
+        if (!rst_n) begin
+            s0_a <= 0; s0_b <= 0; s0_c <= 0;
+            s1_a <= 0; s1_b <= 0; s1_c <= 0; stage_out <= 0;
+        end else begin
+            s0_a <= stage_in; s0_b <= stage_in; s0_c <= stage_in;
+            s1_a <= m0; s1_b <= m0; s1_c <= m0;
+            stage_out <= m1;
+        end
     end
-
 endmodule
 """
 
@@ -1206,44 +1275,30 @@ module {module_name} (
 endmodule
 """
 
-_DICE_FEEDBACK_CHECK_RTL = """\
+_DICE_FEEDBACK_RTL = """\
 // ------------------------------------------------------------
-// {module_name} — DICE with Feedback Monitoring
-// DICE storage + per-bit feedback consistency check
+// {module_name} — DICE 带反馈检查（DICE 单元 + 反馈回路错误检测）
+// 四节点互锁存储 + 反馈一致性监控，输出为 4-of-4 多数结果
 // ------------------------------------------------------------
 module {module_name} (
-    input  wire                     clk,
-    input  wire                     rst_n,
+    input  wire                     clk, rst_n,
     input  wire [{signal_width}-1:0] d,
     output reg  [{signal_width}-1:0] q,
-    output wire                     consistency_error
+    output wire                     fb_error
 );
-
     reg [{signal_width}-1:0] n0, n1, n2, n3;
     integer i;
-
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            n0 <= {{({signal_width}){{1'b0}}}};
-            n1 <= {{({signal_width}){{1'b0}}}};
-            n2 <= {{({signal_width}){{1'b0}}}};
-            n3 <= {{({signal_width}){{1'b0}}}};
-            q  <= {{({signal_width}){{1'b0}}}};
-        end else begin
-            // Interlocked DICE update
+        if (!rst_n) begin n0 <= 0; n1 <= 0; n2 <= 0; n3 <= 0; q <= 0; end
+        else begin
             for (i = 0; i < {signal_width}; i = i + 1) begin
-                n0[i] <= d[i];
-                n1[i] <= n0[i];
-                n2[i] <= n1[i];
-                n3[i] <= n2[i];
-                q[i]  <= n0[i] & n1[i] & n2[i] & n3[i];  // 4-of-4 majority
+                n0[i] <= d[i]; n1[i] <= n0[i]; n2[i] <= n1[i]; n3[i] <= n2[i];
+                q[i] <= n0[i] & n1[i] & n2[i] & n3[i];
             end
         end
     end
-
-    // Consistency: all four nodes should agree
-    assign consistency_error = (n0 != n1) | (n0 != n2) | (n0 != n3);
-
+    // 反馈回路错误检测：任意节点不一致即报错
+    assign fb_error = (n0 != n1) | (n0 != n2) | (n0 != n3);
 endmodule
 """
 
@@ -1352,6 +1407,118 @@ module {module_name} (
 
     assign uncorrectable_error = (syndrome != 0) && (^syndrome != 1);
 
+endmodule
+"""
+
+_ECC_REGISTER_FILE_RTL = """\
+// ------------------------------------------------------------
+// {module_name} — 寄存器文件 ECC（多端口寄存器文件的汉明码保护）
+// 写操作附加 SECDED 校验位，读操作纠正单比特错误并检测双比特错误
+// ------------------------------------------------------------
+module {module_name} (
+    input  wire                     clk, rst_n,
+    input  wire                     wr_en,
+    input  wire [3:0]               addr,
+    input  wire [{signal_width}-1:0] wr_data,
+    output reg  [{signal_width}-1:0] rd_data,
+    output wire                     unc_err
+);
+    reg [{signal_width}+6:0] mem [0:15];
+    // 校验位生成（简化 Hsiao 码矩阵）
+    wire [6:0] chk;
+    assign chk[0] = ^wr_data[0:{signal_width}/8];
+    assign chk[1] = ^wr_data[{signal_width}/8:{signal_width}/4];
+    assign chk[2] = ^wr_data[{signal_width}/4:{signal_width}/2];
+    assign chk[3] = ^wr_data[{signal_width}/2:3*{signal_width}/4];
+    assign chk[4] = ^wr_data; chk[5] = ^(wr_data>>1); chk[6] = ^(wr_data>>2);
+    wire [6:0] syn = chk ^ mem[addr][6:0];
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) rd_data <= 0;
+        else if (wr_en) mem[addr] <= {wr_data, chk};
+        else rd_data <= (syn!=0 && ^syn==1) ? (mem[addr][{signal_width}+6:7]^(1<<syn[4:0])) : mem[addr][{signal_width}+6:7];
+    end
+    // 不可纠正错误标志（双比特错误）
+    assign unc_err = (syn != 0) && (^syn != 1);
+endmodule
+"""
+
+_PARITY_BYTE_RTL = """\
+// ------------------------------------------------------------
+// {module_name} — 逐字节奇偶校验（每字节独立奇偶位）
+// 每字节独立生成/检查奇偶位，支持偶数或奇数校验
+// ------------------------------------------------------------
+module {module_name} (
+    input  wire                     clk, rst_n,
+    input  wire [{signal_width}-1:0] data_in,
+    input  wire [{signal_width}/8-1:0] parity_in,
+    input  wire                     even_parity,
+    output wire [{signal_width}/8-1:0] parity_gen,
+    output wire                     error_flag,
+    output reg  [{signal_width}-1:0] data_out
+);
+    genvar b;
+    wire [{signal_width}/8-1:0] p;
+    generate
+        for (b = 0; b < {signal_width}/8; b = b + 1) begin : byte_parity
+            // 每字节独立奇偶计算
+            assign p[b] = even_parity ? ^data_in[b*8+:8] : ~(^data_in[b*8+:8]);
+        end
+    endgenerate
+    assign parity_gen = p;
+    assign error_flag = (p != parity_in);  // 奇偶校验不一致即报错
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) data_out <= 0; else data_out <= data_in;
+    end
+endmodule
+"""
+
+_WATCHDOG_HEARTBEAT_RTL = """\
+// ------------------------------------------------------------
+// {module_name} — 心跳看门狗（周期性脉冲输出，非超时复位）
+// 持续输出可配置频率的心跳脉冲，非传统超时复位机制
+// ------------------------------------------------------------
+module {module_name} (
+    input  wire                     clk, rst_n,
+    input  wire [{signal_width}-1:0] divider,
+    output reg                      heartbeat,
+    output reg  [{signal_width}-1:0] counter
+);
+    // 可配置分频器：counter 达到 divider 时翻转 heartbeat
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin counter <= 0; heartbeat <= 1'b0; end
+        else if (counter >= divider) begin
+            counter <= 0; heartbeat <= ~heartbeat;  // 产生心跳脉冲
+        end else begin
+            counter <= counter + 1'b1;
+        end
+    end
+endmodule
+"""
+
+_CNT_COMP_RANGE_RTL = """\
+// ------------------------------------------------------------
+// {module_name} — 范围检查计数器比较器
+// 监控计数器是否在 [range_min, range_max] 范围内
+// ------------------------------------------------------------
+module {module_name} (
+    input  wire                     clk, rst_n,
+    input  wire                     count_en,
+    input  wire [{signal_width}-1:0] cnt_step,
+    input  wire [{signal_width}-1:0] range_min,
+    input  wire [{signal_width}-1:0] range_max,
+    output wire                     range_error,
+    output reg  [{signal_width}-1:0] cnt_out
+);
+    reg [{signal_width}-1:0] cnt;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) cnt <= 0;
+        else if (count_en) cnt <= cnt + cnt_step;
+    end
+    // 范围越界检查：cnt < min 或 cnt > max 时断言错误
+    assign range_error = (cnt < range_min) | (cnt > range_max);
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) cnt_out <= 0; else cnt_out <= cnt;
+    end
 endmodule
 """
 

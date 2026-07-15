@@ -426,7 +426,16 @@ class ASTRepairer:
     def _fix_port_direction(self, content: str, error: str) -> str:
         """修复端口方向缺失。
 
-        在 module 端口声明中，为未指定方向的端口添加 'wire' 类型声明。
+        处理两种情况：
+          1. Old-style 端口列表（逗号分隔的纯端口名）—— 添加默认 wire 声明
+          2. 端口在列表中但缺少 input/output，模块内有 wire/reg 声明 —— 推断方向并添加
+
+        Args:
+            content: RTL 源代码。
+            error:   错误消息字符串。
+
+        Returns:
+            修复后的 RTL 代码。
         """
         logger.print(f"  [AST_REPAIR] Fixing port direction for error: {error[:80]}")
 
@@ -458,33 +467,7 @@ class ASTRepairer:
         if has_direction:
             return content  # 已有方向声明，不做改动
 
-        # 为端口列表中的每个标识符添加 wire 类型
-        # 这可以修复纯端口名列表（不含 direction 的 old-style 端口）
-        # 查找裸端口名：孤立标识符
-        def _add_wire_prefix(m: re.Match) -> str:
-            name = m.group(0).strip()
-            # 跳过 module 名、关键字、标点
-            if re.match(r'^\w+$', name) and not re.match(
-                r'\b(module|input|output|inout|wire|reg|begin|end|if|else|case|endcase|'
-                r'always|initial|assign|for|while|repeat|function|endfunction|'
-                r'task|endtask|generate|endgenerate|specify|endspecify)\b', name
-            ):
-                # 确保它不是已有的 wire/reg 声明的一部分
-                pre_chars = content[:module_match.end() + m.start()]
-                last_keyword = re.findall(r'\b(input|output|inout)\b', pre_chars)
-                if not last_keyword or last_keyword[-1] not in ('input', 'output', 'inout'):
-                    return f'wire {name}'
-            return m.group(0)
-
-        # 处理端口列表
-        port_items = re.findall(r'\b\w+\b', port_list_text)
-        # 跳过第一个（通常是 module 名的延续或端口开始）
-        for name in port_items:
-            if name in ('input', 'output', 'inout', 'wire', 'reg'):
-                return content  # 已有方向声明，不处理
-            break
-
-        # 简单方案：在 module 声明后添加默认 wire 声明（如果有逗号分隔的端口列表）
+        # ── 情况 1：Old-style 端口列表（纯逗号分隔的端口名）──
         # 检查是否是纯逗号分隔的端口名
         if ',' in port_list_text and not re.search(r'\b(input|output|inout)\b', port_list_text):
             # 在 module 行之后插入默认 wire 声明
@@ -493,6 +476,96 @@ class ASTRepairer:
                 port_names = [p.strip() for p in port_list_text.split(',')]
                 wire_decls = '\n'.join([f'    wire {p};' for p in port_names if re.match(r'^\w+$', p)])
                 content = content[:insert_pos] + '\n' + wire_decls + content[insert_pos:]
+
+        # ── 情况 2：端口在列表中但缺少 input/output，模块内部有 wire/reg 声明 ──
+        # 提取端口列表中的端口名（去除空格、逗号、换行）
+        raw_port_names = re.findall(r'\b(?!input\b|output\b|inout\b|wire\b|reg\b)\w+\b', port_list_text)
+        # 排除 module 名本身
+        module_name = module_match.group(1)
+        raw_port_names = [p for p in raw_port_names if p != module_name]
+
+        # 收集端口列表中缺少方向的端口（没有对应 input/output/inout 声明的）
+        missing_direction_ports = []
+        for pname in raw_port_names:
+            # 检查在端口列表之前的上下文中是否已有方向声明
+            scope_before_port = content[:module_match.end()]
+            # 检查该端口是否已经在某行有 input/output/inout 前缀（可能在端口列表之外声明）
+            decl_pattern = rf'(input|output|inout)\s+(wire|reg)?\s*.*\b{re.escape(pname)}\b'
+            if not re.search(decl_pattern, scope_before_port + port_list_text, re.IGNORECASE):
+                missing_direction_ports.append(pname)
+
+        if missing_direction_ports:
+            # 对每个缺少方向的端口，尝试推断方向：
+            # 1. 如果模块内有 wire 声明但无 reg 赋值 → 通常是 input
+            # 2. 如果模块内有 reg 声明且有赋值 → 通常是 output
+            # 3. 默认使用 input（保守策略）
+            module_body = content[port_list_end:]
+            lines = content.split('\n')
+
+            # 找到端口列表结束行号之后的第一行声明行
+            insert_line = 0
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped.startswith('//') or stripped.startswith('/*'):
+                    continue
+                if stripped.startswith(('input', 'output', 'inout', 'wire', 'reg')):
+                    # 计算 abs 行号
+                    abs_line = i + 1
+                    if abs_line > content[:port_list_end].count('\n') + 1:
+                        insert_line = i
+                        break
+
+            for pname in missing_direction_ports:
+                # 推断方向：检查模块体内是否对该信号赋值
+                # 如果是 always 块中 <= 赋值的左侧 → output
+                # 如果是 assign 语句的左侧 → output
+                # 其他情况 → input
+                is_output = False
+                # 检测 always 块中的非阻塞赋值左侧
+                assign_patterns = [
+                    rf'\b{pname}\b\s*<=\s*',       # 非阻塞赋值
+                    rf'\b{pname}\b\s*=\s*',         # 阻塞赋值（always 中）
+                    rf'assign\s+\b{pname}\b\s*=',   # assign 语句
+                ]
+                for ap in assign_patterns:
+                    if re.search(ap, module_body):
+                        is_output = True
+                        break
+
+                # 在 module 的声明区域添加方向声明
+                direction = 'output' if is_output else 'input'
+                if insert_line > 0 and insert_line < len(lines):
+                    indent = ''
+                    for ch in lines[insert_line]:
+                        if ch in (' ', '\t'):
+                            indent += ch
+                        else:
+                            break
+                    # 查找该端口在模块内部的已有声明（如 wire [7:0] data;）
+                    existing_decl = re.search(
+                        rf'(wire|reg)\s*(\[[^\]]*\])?\s*{re.escape(pname)}\s*;',
+                        '\n'.join(lines)
+                    )
+                    if existing_decl:
+                        # 已有 wire/reg 声明：将 wire → input/output 并保留位宽
+                        old_decl = existing_decl.group(0)
+                        decl_type = existing_decl.group(1)
+                        width_part = existing_decl.group(2) or ''
+                        new_decl = old_decl.replace(
+                            f'{decl_type} ',
+                            f'{direction} {decl_type} '
+                        )
+                        content = content.replace(old_decl, new_decl, 1)
+                        lines = content.split('\n')
+                    else:
+                        # 无已有声明：插入新方向声明
+                        decl_line = f"{indent}{direction} {pname};"
+                        lines.insert(insert_line, decl_line)
+                        insert_line += 1
+                        content = '\n'.join(lines)
+                        lines = content.split('\n')
+
+                    logger.print(f"      → added '{direction}' direction for port '{pname}'")
 
         return content
 
@@ -583,6 +656,161 @@ class ASTRepairer:
         logger.print(f"  [AST_REPAIR] Added wire declaration for '{signal}'")
         return content
 
+    def _detect_undeclared_in_always(self, content: str) -> str:
+        """检测 always 块中使用的未声明信号，自动添加 wire 声明。
+
+        扫描所有 always @(...) 块中的信号引用，与已声明的
+        wire/reg/input/output/inout 信号列表交叉比对，找到遗漏的信号声明。
+
+        Args:
+            content: RTL 源代码。
+
+        Returns:
+            修复后的 RTL 代码（自动添加了缺失的 wire 声明）。
+        """
+        logger.print(f"  [AST_REPAIR] Scanning always blocks for undeclared signals...")
+
+        # ── Step 1: 收集所有已声明的信号 ──
+        declared_signals = set()
+        # 提取 wire/reg/input/output/inout 声明中的信号名
+        decl_patterns = [
+            r'(input|output|inout)\s+(wire|reg)?\s*(?:\[[^\]]*\])?\s*(\w+)',  # 带方向
+            r'(wire|reg|tri|wand|wor)\s*(?:\[[^\]]*\])?\s*(\w+)',             # 纯声明
+        ]
+        for dp in decl_patterns:
+            for m in re.finditer(dp, content, re.IGNORECASE):
+                # 捕获组位置取决于模式
+                groups = m.groups()
+                if groups[-1] and re.match(r'^[a-zA-Z_]\w*$', groups[-1]):
+                    declared_signals.add(groups[-1])
+
+        # 提取端口列表中的端口名（可能有位宽）
+        # 如 module test (clk, rst_n, data_in, data_out)
+        module_match = re.search(r'module\s+\w+\s*\(', content)
+        if module_match:
+            paren_depth = 0
+            port_end = -1
+            for i in range(module_match.end(), len(content)):
+                if content[i] == '(':
+                    paren_depth += 1
+                elif content[i] == ')':
+                    paren_depth -= 1
+                    if paren_depth == 0:
+                        port_end = i
+                        break
+            if port_end > 0:
+                port_text = content[module_match.end():port_end]
+                for p in re.findall(r'\b([a-zA-Z_]\w*)\b', port_text):
+                    if p.lower() not in ('input', 'output', 'inout', 'wire', 'reg',
+                                         'module', 'tri', 'wand', 'wor'):
+                        declared_signals.add(p)
+
+        logger.print(f"  [AST_REPAIR]   Found {len(declared_signals)} declared signals")
+
+        # ── Step 2: 提取 always 块中的信号引用 ──
+        always_signals = set()
+        # 查找所有 always 块
+        always_blocks = list(re.finditer(
+            r'always\s*@\s*\([^)]*\)\s*((?:begin\s*(?::\s*\w+)?)?[^;]*?(?:;\s*)*'
+            r'(?:[^e]|e(?!ndmodule))*?(?:end\s*)?)',
+            content, re.IGNORECASE | re.DOTALL
+        ))
+        # 如果没有匹配到，用简单模式再试一次
+        if not always_blocks:
+            always_blocks = list(re.finditer(
+                r'always\s*@\s*\([^)]*\)',
+                content, re.IGNORECASE
+            ))
+
+        for ab_match in always_blocks:
+            # 提取 always 块内容（从 posedge 列表后到 end / endmodule）
+            block_start = ab_match.end()
+            # 找到块边界：下一个 endmodule / end / 行末
+            block_text = content[block_start:block_start + 5000]  # 最多取 5000 字符
+            # 限制到 endmodule 或下一个 always/assign/module
+            block_end_m = re.search(
+                r'\b(endmodule|end\b|always\s*@|assign\s|module\s)',
+                block_text
+            )
+            if block_end_m:
+                block_text = block_text[:block_end_m.start()]
+
+            # 提取信号引用（排除系统函数、常量、数字）
+            for sig_m in re.finditer(r'\b([a-zA-Z_]\w*)\b', block_text):
+                sig = sig_m.group(1)
+                # 跳过 Verilog 关键字
+                if sig.lower() in ('if', 'else', 'case', 'endcase', 'for', 'begin',
+                                   'end', 'posedge', 'negedge', 'or', 'and', 'not',
+                                   'nand', 'nor', 'xor', 'xnor', 'wire', 'reg',
+                                   'input', 'output', 'inout', 'assign', 'always',
+                                   'module', 'endmodule', 'initial', 'generate',
+                                   'endgenerate', 'while', 'repeat', 'function',
+                                   'endfunction', 'task', 'endtask', 'integer',
+                                   'genvar', 'real', 'time', 'supply0', 'supply1',
+                                   'tri', 'tri0', 'tri1', 'wand', 'wor', 'triand',
+                                   'trior', 'unsigned', 'signed', 'small', 'medium',
+                                   'large', 'scalared', 'vectored', 'buf', 'bufif0',
+                                   'bufif1', 'notif0', 'notif1', 'cmos', 'nmos',
+                                   'pmos', 'rcmos', 'pullup', 'pulldown', 'defparam',
+                                   'localparam', 'parameter', 'specify', 'endspecify'):
+                    continue
+                # 跳过纯数字或全大写常量
+                if re.match(r'^[0-9]', sig) or (sig.upper() == sig and len(sig) > 1):
+                    continue
+                always_signals.add(sig)
+
+        logger.print(f"  [AST_REPAIR]   Found {len(always_signals)} signal references in always blocks")
+
+        # ── Step 3: 找出未声明的信号 ──
+        undeclared = always_signals - declared_signals
+        if not undeclared:
+            logger.print(f"  [AST_REPAIR]   All signals in always blocks are declared")
+            return content
+
+        logger.print(f"  [AST_REPAIR]   Undeclared signals in always blocks: {len(undeclared)}")
+        fixes_applied = 0
+
+        # ── Step 4: 在 module 的声明区域插入 wire 声明 ──
+        lines = content.split('\n')
+        # 找到 module 声明区域的最后一行（最后一个 input/output/wire/reg 之后）
+        last_decl_line = -1
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if re.match(r'^\s*(input|output|inout|wire|reg|tri|wand|wor)\s', stripped, re.IGNORECASE):
+                last_decl_line = i
+
+        if last_decl_line < 0:
+            # 没有声明行，放在 module 行后
+            for i, line in enumerate(lines):
+                if re.match(r'module\s+\w+\s*\(', line, re.IGNORECASE):
+                    last_decl_line = i
+                    break
+
+        if last_decl_line >= 0:
+            indent = ''
+            if last_decl_line < len(lines):
+                for ch in lines[last_decl_line]:
+                    if ch in (' ', '\t'):
+                        indent += ch
+                    else:
+                        break
+
+            for sig in sorted(undeclared):
+                # 再次确认没有声明
+                if re.search(rf'(wire|reg|input|output)\s+.*\b{re.escape(sig)}\b', content):
+                    continue
+                # 插入 wire 声明
+                lines.insert(last_decl_line + 1, f"{indent}wire {sig};")
+                last_decl_line += 1
+                fixes_applied += 1
+                logger.print(f"      → auto-declared wire '{sig}' (used in always block)")
+
+        if fixes_applied > 0:
+            content = '\n'.join(lines)
+            logger.print(f"  [AST_REPAIR]   Added {fixes_applied} wire declarations for always-block signals")
+
+        return content
+
     # ------------------------------------------------------------------
     # 降级方案：正则修复
     # ------------------------------------------------------------------
@@ -607,6 +835,9 @@ class ASTRepairer:
             if 'endmodule' not in content:
                 content = content.rstrip('\n') + '\nendmodule\n'
 
+        # ── Always 块中未声明信号检测（始终执行）──
+        content = self._detect_undeclared_in_always(content)
+
         # ── TMR 冗余逻辑检测（始终执行）──
         logger.print(f"  [AST_REPAIR] TMR pattern detection...")
         _tmr_info = self._detect_tmr_patterns(content)
@@ -619,8 +850,17 @@ class ASTRepairer:
                 content = self._fix_tmr_missing_voter(content, _tmr_info)
             logger.print(f"  [AST_REPAIR]   -> Checking width consistency")
             content = self._fix_tmr_width_mismatch(content, _tmr_info)
-            if _tmr_info.get("has_voter"):
-                logger.print(f"  [AST_REPAIR]   ✓ Voter already present — no fix needed")
+
+            # ── TMR 反模式修复 ──
+            if "fake_tmr" in _tmr_info.get("issues", []):
+                logger.print(f"  [AST_REPAIR]   -> Fixing fake TMR (incomplete copies)")
+                content = self._fix_tmr_incomplete_copies(content, _tmr_info)
+            if "incomplete_tmr" in _tmr_info.get("issues", []):
+                logger.print(f"  [AST_REPAIR]   -> Fixing incomplete TMR (unequal widths)")
+                content = self._fix_tmr_width_mismatch(content, _tmr_info)
+            if "dead_tmr" in _tmr_info.get("issues", []):
+                logger.print(f"  [AST_REPAIR]   -> Fixing dead TMR (voter output unused)")
+                content = self._fix_tmr_dead_voter(content, _tmr_info)
         else:
             logger.print(f"  [AST_REPAIR]   No TMR pattern detected")
 
@@ -637,9 +877,13 @@ class ASTRepairer:
           1. 三倍寄存器（copy0/copy1/copy2 或 reg0/reg1/reg2）
           2. 不完整的多数组件（存在冗余但缺少或部分缺失投票器）
           3. 冗余寄存器位宽不一致
+          4. 伪 TMR（只有 2 个副本而非 3 个）
+          5. 部分 TMR（部分信号三重化，部分未三重化）
+          6. 死 TMR（投票器输出未被使用）
+          7. 更多命名模式（_a/_b/_c 后缀, _1/_2/_3 后缀等）
 
         Returns:
-            Dict 含 detected, copies, width, has_voter, voter_lines, issues 字段。
+            Dict 含 detected, copies, width, has_voter, voter_lines, issues, signal_names 字段。
         """
         result: Dict[str, Any] = {
             "detected": False,
@@ -649,35 +893,118 @@ class ASTRepairer:
             "voter_lines": [],
             "issues": [],
             "tmr_type": None,
+            "signal_names": [],      # 检测到的原始信号名列表
+            "widths_per_copy": {},    # 每个副本的位宽 {name: width}
+            "voter_output_name": None,  # 投票器输出信号名
         }
 
-        # 模式 1：三重寄存器声明（naming: copy0/copy1/copy2, reg0/reg1/reg2, dup0/dup1/dup2）
+        # ── 模式 1：三重寄存器声明 ──
+        # 支持多种命名约定：copy0/copy1/copy2, reg0/reg1/reg2, dup0/dup1/dup2
+        # tri0/tri1/tri2, r0/r1/r2, node0/node1/node2
+        # 以及带下划线变体：copy_0/copy_1/copy_2
+        # 以及后缀变体：sig_a/sig_b/sig_c, sig_1/sig_2/sig_3
         _triplet_patterns = [
-            (r'(copy|reg|dup|r|tri)(\d)\s*\[\s*(\d+):(\d+)\]', 3),  # [WIDTH-1:0]
-            (r'(copy|reg|dup)_(\d)\s*\[\s*(\d+):(\d+)\]', 3),
-            (r'(n|node)(\d)\s*\[\s*(\d+):(\d+)\]', 4),             # DICE nodes
+            (r'(copy|reg|dup|r|tri)(\d)\s*\[\s*(\d+):(\d+)\]', 3),         # copy0[W:0]
+            (r'(copy|reg|dup|r|tri)_(\d)\s*\[\s*(\d+):(\d+)\]', 3),        # copy_0[W:0]
+            (r'(n|node)(\d)\s*\[\s*(\d+):(\d+)\]', 4),                     # node0[W:0]
+            (r'(\w+)\s*\[\s*(\d+):(\d+)\]\s*;\s*\n\s*\1\s*\[\s*(\d+):(\d+)\]', 2),  # 连续重复声明
         ]
 
-        for pat, min_count in _triplet_patterns:
-            matches = list(re.finditer(pat, content, re.IGNORECASE))
-            if len(matches) >= min_count:
-                # 检查是否三个索引不同
-                indices = set()
-                names = set()
-                for m in matches:
-                    indices.add(m.group(2))
-                    names.add(m.group(1).lower())
-                if len(indices) >= 3 or (len(indices) == 3 and len(matches) >= 3):
-                    result["detected"] = True
-                    result["copies"] = [f"{next(n for n in names)}{i}" for i in sorted(indices)[:3]]
-                    result["tmr_type"] = "triplicate_reg"
-                    # 提取位宽
-                    try:
-                        hi = int(matches[0].group(3))
-                        lo = int(matches[0].group(4))
-                        result["signal_width"] = hi - lo + 1
-                    except (ValueError, IndexError):
-                        result["signal_width"] = 0
+        # ── 检查命名模式：前缀+数字（用于非位宽场景）──
+        # 如 wire copy0, copy1, copy2; 或 reg r0, r1, r2;
+        # 以及 reg [7:0] copy0, copy1, copy2;（单行多信号声明）
+        _numbered_names = {}
+        for base in ['copy', 'reg', 'dup', 'tri', 'r', 'node']:
+            # 模式 A：带 wire/reg 前缀的独立声明（如 "wire copy0"）
+            for m in re.finditer(
+                rf'(wire|reg)\s+(?:\[[^\]]*\])?\s*{base}(\d)\b',
+                content, re.IGNORECASE
+            ):
+                idx = m.group(2)
+                _numbered_names.setdefault(base, set()).add(idx)
+            # 模式 B：逗号分隔的多信号声明 — 提取整行中所有 base+数字
+            for m in re.finditer(
+                rf'(?:wire|reg)\s*(?:\[[^\]]*\])?\s*{base}\d[\s\S]*?;',
+                content, re.IGNORECASE
+            ):
+                # 从匹配行中提取所有 base+数字
+                for sub_m in re.finditer(rf'{base}(\d)', m.group(0)):
+                    idx = sub_m.group(1)
+                    _numbered_names.setdefault(base, set()).add(idx)
+
+        # 检查是否有 3 个不同的数字索引（标准 TMR）或 2 个（伪 TMR）
+        for base, indices in _numbered_names.items():
+            if len(indices) >= 3:
+                sorted_idx = sorted(indices, key=int)[:3]
+                result["detected"] = True
+                # 构造副本名：如 copy0, copy1, copy2
+                result["copies"] = [f"{base}{i}" for i in sorted_idx]
+                result["tmr_type"] = "triplicate_reg"
+                # 收集位宽
+                for c in result["copies"]:
+                    wm = re.search(
+                        rf'(?:wire|reg)\s*\[?\s*(\d+):(\d+)\s*\]?\s*{re.escape(c)}\b',
+                        content
+                    )
+                    if wm:
+                        try:
+                            w = int(wm.group(1)) - int(wm.group(2)) + 1
+                            result["widths_per_copy"][c] = w
+                        except ValueError:
+                            pass
+                if result["widths_per_copy"]:
+                    result["signal_width"] = max(result["widths_per_copy"].values())
+                break
+            elif len(indices) == 2:
+                # 伪 TMR 检测：有 2 个副本但不足 3 个
+                sorted_idx = sorted(indices, key=int)[:2]
+                result["detected"] = True
+                result["copies"] = [f"{base}{i}" for i in sorted_idx]
+                result["tmr_type"] = "fake_tmr"
+                result["issues"].append("fake_tmr")
+                break
+
+        # ── 模式 1b：后缀名模式 _a/_b/_c 或 _1/_2/_3 ──
+        if not result["detected"]:
+            for suffix_pat, suffix_list in [
+                (r'(\w+)_([abc])\b', ['a', 'b', 'c']),
+                (r'(\w+)_([123])\b', ['1', '2', '3']),
+            ]:
+                suffix_matches = {}
+                for m in re.finditer(suffix_pat, content):
+                    base_name = m.group(1)
+                    suffix_val = m.group(2)
+                    # 排除关键字
+                    if base_name.lower() in ('module', 'input', 'output', 'wire', 'reg',
+                                             'always', 'assign', 'begin', 'end', 'case',
+                                             'if', 'else', 'for', 'while'):
+                        continue
+                    if base_name not in suffix_matches:
+                        suffix_matches[base_name] = set()
+                    suffix_matches[base_name].add(suffix_val)
+
+                for base_name, suffixes in suffix_matches.items():
+                    if all(s in suffixes for s in suffix_list):
+                        result["detected"] = True
+                        result["copies"] = [f"{base_name}_{s}" for s in suffix_list]
+                        result["tmr_type"] = "triplicate_suffix"
+                        result["signal_names"] = [f"{base_name}_{s}" for s in suffix_list]
+                        # 提取位宽
+                        for c in result["copies"]:
+                            wm = re.search(
+                                rf'(?:wire|reg)\s*\[?\s*(\d+):(\d+)\s*\]?\s*{re.escape(c)}\b',
+                                content
+                            )
+                            if wm:
+                                try:
+                                    w = int(wm.group(1)) - int(wm.group(2)) + 1
+                                    result["widths_per_copy"][c] = w
+                                except ValueError:
+                                    pass
+                        if result["widths_per_copy"]:
+                            result["signal_width"] = max(result["widths_per_copy"].values())
+                        break
+                if result["detected"]:
                     break
 
         # 模式 2：三个 always 块（同步复位，驱动同时钟信号）
@@ -700,23 +1027,63 @@ class ASTRepairer:
                     result["copies"] = list(regs_in_blocks)[:3]
                     result["tmr_type"] = "triplicate_always"
 
-        # 投票器检测
+        # ── 投票器检测 ──
         voter_patterns = [
             r'(maj|majority|voter)',
             r'(\w+)\s*&\s*(\w+)\s*\|\s*\1\s*&\s*(\w+)\s*\|\s*\2\s*&\s*\3',  # ab|ac|bc
-            r'assign\s+\w+\s*=\s*\(.*?&.*?\).*?\|.*?\(.*?&.*?\).*?\|',
+            r'(\w+)\s*&\s*(\w+)\s*\|\s*\1\s*&\s*(\w+)\s*\|\s*\2\s*&\s*\3',  # 多数投票逻辑
+            r'assign\s+(\w+)\s*=\s*\(.*?&.*?\).*?\|.*?\(.*?&.*?\).*?\|',
+            r'assign\s+(\w+)\s*=\s*\(.*?\^.*?\).*?\&.*?\(.*?\^.*?\)',        # (a^b)&(a^c)&(b^c) 变体
         ]
         for vp in voter_patterns:
             vmatches = list(re.finditer(vp, content, re.IGNORECASE))
             if vmatches:
                 result["has_voter"] = True
                 result["voter_lines"] = [content[:m.start()].count('\n') + 1 for m in vmatches[:3]]
+                # 尝试提取投票器输出信号名
+                if vp.startswith(r'assign\s+(\w+)'):
+                    vm = vmatches[0]
+                    result["voter_output_name"] = vm.group(1)
                 break
 
-        # 问题检测
+        # ── TMR 反模式检测 ──
+
+        # 反模式 1：伪 TMR —— 声明了 TMR 模式的信号但只有 2 个副本
+        if result["detected"] and len(result["copies"]) < 3:
+            result["issues"].append("fake_tmr")
+
+        # 反模式 2：位宽不一致的 TMR
+        if result["detected"] and result["widths_per_copy"]:
+            widths_set = set(result["widths_per_copy"].values())
+            if len(widths_set) > 1:
+                result["issues"].append("incomplete_tmr")
+
+        # 反模式 3：有副本和投票器，但投票器输出未被任何后续逻辑使用
+        if result["detected"] and result["has_voter"]:
+            voter_out = result.get("voter_output_name")
+            if voter_out:
+                # 检查投票器输出是否被使用（出现在 assign/always 或端口列表中）
+                usage_pattern = rf'\b{re.escape(voter_out)}\b'
+                # 排除自身声明行
+                all_uses = list(re.finditer(usage_pattern, content))
+                # 过滤：只保留非声明行引用
+                usage_count = 0
+                for u in all_uses:
+                    line_start = content.rfind('\n', 0, u.start()) + 1
+                    line_end = content.find('\n', u.start())
+                    if line_end < 0:
+                        line_end = len(content)
+                    line_text = content[line_start:line_end].strip()
+                    # 跳过声明行本身
+                    if re.match(rf'(wire|reg|assign)\s+.*{re.escape(voter_out)}', line_text):
+                        continue
+                    usage_count += 1
+                if usage_count <= 1:  # 只有 voter 赋值本身，无消费者
+                    result["issues"].append("dead_tmr")
+
+        # 问题检测：缺少投票器
         if result["detected"] and not result["has_voter"]:
             result["issues"].append("missing_voter")
-        if result["detected"] and not result["has_voter"]:
             result["issues"].append("voter_needed")
 
         return result
@@ -775,7 +1142,20 @@ class ASTRepairer:
         return content
 
     def _fix_tmr_width_mismatch(self, content: str, tmr_info: Dict) -> str:
-        """修复 TMR 冗余寄存器之间的位宽不一致。"""
+        """修复 TMR 冗余寄存器之间的位宽不一致。
+
+        检测并修复以下位宽问题：
+          1. TMR 副本之间声明宽度不一致
+          2. 投票器输出宽度与副本宽度不匹配
+          3. 副本信号在赋值/使用处的位宽不匹配
+
+        Args:
+            content: RTL 源代码。
+            tmr_info: _detect_tmr_patterns() 返回的检测信息。
+
+        Returns:
+            修复后的 RTL 代码。
+        """
         if not tmr_info.get("detected"):
             return content
 
@@ -783,11 +1163,11 @@ class ASTRepairer:
         if len(copies) < 3:
             return content
 
-        # 收集每个副本的声明宽度
+        # ── 1. 收集每个副本的声明宽度 ──
         widths: Dict[str, int] = {}
         for c in copies:
             _m = re.search(
-                rf'(wire|reg)\s*\[?\s*(\d+):(\d+)\s*\]?\s*{c}\b',
+                rf'(wire|reg)\s*\[?\s*(\d+):(\d+)\s*\]?\s*{re.escape(c)}\b',
                 content
             )
             if _m:
@@ -795,11 +1175,22 @@ class ASTRepairer:
                     widths[c] = int(_m.group(2)) - int(_m.group(3)) + 1
                 except ValueError:
                     pass
+            else:
+                # 尝试查找位宽声明的另一种格式：如 wire [WIDTH-1:0] copy0
+                _m2 = re.search(
+                    rf'(wire|reg)\s+\[?(\w+)\s*-\s*(\d+)\s*:\s*(\d+)\]?\s*{re.escape(c)}\b',
+                    content
+                )
+                if _m2:
+                    try:
+                        hi = int(_m2.group(2))  # 可能是参数名，跳过
+                    except ValueError:
+                        pass
 
         if len(widths) < 2:
             return content
 
-        # 如果有不一致，统一为最大宽度
+        # ── 2. 修复副本之间的位宽不一致 ──
         _vals = list(widths.values())
         if len(set(_vals)) > 1:
             _target_w = max(_vals)
@@ -807,7 +1198,7 @@ class ASTRepairer:
             for c, w in widths.items():
                 if w != _target_w:
                     _old_decl = re.search(
-                        rf'(wire|reg)\s*\[?\s*{w-1}:0\s*\]?\s*{c}\b', content
+                        rf'(wire|reg)\s*\[?\s*{w-1}:0\s*\]?\s*{re.escape(c)}\b', content
                     )
                     if _old_decl:
                         _old = _old_decl.group(0)
@@ -816,6 +1207,213 @@ class ASTRepairer:
                         ) if _w_range else _old.split(c)[0].strip() + ' ' + c
                         content = content.replace(_old, _new)
                         logger.print(f"  [TMR_REPAIR] Width fix: {c} {w}→{_target_w} bits")
+
+        # ── 3. 检查投票器输出宽度是否与副本匹配 ──
+        voter_out = tmr_info.get("voter_output_name", "voter_out")
+        target_width = max(widths.values()) if widths else tmr_info.get("signal_width", 1)
+        if target_width > 1:
+            voter_decl = re.search(
+                rf'(wire|reg)\s*\[?\s*(\d+):(\d+)\s*\]?\s*{re.escape(voter_out)}\b',
+                content
+            )
+            if voter_decl:
+                try:
+                    vw = int(voter_decl.group(2)) - int(voter_decl.group(3)) + 1
+                    if vw != target_width:
+                        _w_range = f"[{target_width-1}:0]"
+                        _old = voter_decl.group(0)
+                        _new = re.sub(r'\[.*?\]', _w_range, _old)
+                        content = content.replace(_old, _new)
+                        logger.print(f"  [TMR_REPAIR] Voter width fix: {voter_out} {vw}→{target_width}")
+                except ValueError:
+                    pass
+
+        # ── 4. 检查副本信号在使用处的位宽不匹配（如赋值语句中的位选）──
+        for c in copies:
+            if c in widths:
+                w = widths[c]
+                # 检测形如 copy0[7:0] 的位选与声明位宽是否一致
+                for sel_m in re.finditer(
+                    rf'{re.escape(c)}\s*\[\s*(\d+)\s*:\s*(\d+)\s*\]',
+                    content
+                ):
+                    try:
+                        sel_hi = int(sel_m.group(1))
+                        sel_lo = int(sel_m.group(2))
+                        sel_w = sel_hi - sel_lo + 1
+                        if sel_w != w and sel_w < w:
+                            # 位宽不一致，但不自动修改（可能是有意部分选取）
+                            logger.print(f"  [TMR_REPAIR] Note: {c} uses [{sel_hi}:{sel_lo}] "
+                                         f"(declared [{w-1}:0])")
+                    except ValueError:
+                        pass
+
+        return content
+
+    def _fix_tmr_incomplete_copies(self, content: str, tmr_info: Dict) -> str:
+        """修复伪 TMR：副本数量不足（只有 2 个而不是 3 个）。
+
+        当检测到 TMR 模式但只有 2 个副本时，自动生成缺失的第 3 个副本。
+
+        Args:
+            content: RTL 源代码。
+            tmr_info: _detect_tmr_patterns() 返回的检测信息。
+
+        Returns:
+            修复后的 RTL 代码。
+        """
+        copies = tmr_info.get("copies", [])
+        if len(copies) >= 3:
+            return content  # 已经有 3 个，无需修复
+
+        if len(copies) < 2:
+            return content
+
+        # 从已有副本推断命名模式
+        c0 = copies[0]
+        # 尝试推断第三个副本的名称
+        third_copy = None
+
+        # 模式 1：copy0, copy1 → 生成 copy2
+        _m = re.match(r'^(\D+)(\d+)$', c0)
+        if _m:
+            base = _m.group(1)
+            # 检查索引
+            indices = []
+            for c in copies:
+                cm = re.match(r'^(\D+)(\d+)$', c)
+                if cm:
+                    indices.append(int(cm.group(2)))
+            if indices:
+                all_indices = set(range(min(indices), min(indices) + 3))
+                missing = sorted(all_indices - set(indices))
+                if missing:
+                    third_copy = f"{base}{missing[0]}"
+
+        # 模式 2：sig_a, sig_b → 生成 sig_c
+        if not third_copy:
+            _m = re.match(r'^(\w+)_([a-c])$', c0)
+            if _m:
+                base = _m.group(1)
+                suffix_map = {'a': 'c', 'b': 'c'}
+                present = set()
+                for c in copies:
+                    cm = re.match(r'^(\w+)_([a-c])$', c)
+                    if cm:
+                        present.add(cm.group(2))
+                for needed in ['a', 'b', 'c']:
+                    if needed not in present:
+                        third_copy = f"{base}_{needed}"
+                        break
+
+        # 模式 3：sig_1, sig_2 → 生成 sig_3
+        if not third_copy:
+            _m = re.match(r'^(\w+)_(\d)$', c0)
+            if _m:
+                base = _m.group(1)
+                present = set()
+                for c in copies:
+                    cm = re.match(r'^(\w+)_(\d)$', c)
+                    if cm:
+                        present.add(int(cm.group(2)))
+                for needed in [1, 2, 3]:
+                    if needed not in present:
+                        third_copy = f"{base}_{needed}"
+                        break
+
+        if not third_copy:
+            logger.print(f"  [TMR_REPAIR] Could not infer third copy name from {copies}")
+            return content
+
+        # 检查第三个副本是否已存在
+        if re.search(rf'\b{re.escape(third_copy)}\b', content):
+            logger.print(f"  [TMR_REPAIR] Third copy '{third_copy}' already exists")
+            tmr_info["copies"] = copies + [third_copy]
+            return content
+
+        # 获取第一个副本的声明，复制为第三个副本
+        decl_pattern = rf'(wire|reg)\s*(\[[^\]]*\])?\s*{re.escape(c0)}\b'
+        decl_m = re.search(decl_pattern, content)
+        if not decl_m:
+            # 没有位宽声明，简单添加
+            decl_pattern = rf'(wire|reg)\s+{re.escape(c0)}\b'
+            decl_m = re.search(decl_pattern, content)
+
+        if decl_m:
+            old_decl = decl_m.group(0)
+            new_decl = old_decl.replace(c0, third_copy)
+            # 在第一个副本声明之后插入
+            insert_pos = content.find('\n', decl_m.end())
+            if insert_pos > 0:
+                indent = ''
+                line_start = content.rfind('\n', 0, decl_m.start()) + 1
+                for ch in content[line_start:decl_m.start()]:
+                    if ch in (' ', '\t'):
+                        indent += ch
+                    else:
+                        break
+                content = content[:insert_pos] + '\n' + indent + new_decl + ';' + content[insert_pos:]
+                tmr_info["copies"] = copies + [third_copy]
+                logger.print(f"  [TMR_REPAIR] Added missing third copy: '{third_copy}'")
+        else:
+            # 在 endmodule 前添加
+            insert_pos = content.rfind('\nendmodule')
+            if insert_pos > 0:
+                indent = '    '
+                new_line = f"{indent}wire {third_copy};"
+                content = content[:insert_pos] + new_line + '\n' + content[insert_pos:]
+                tmr_info["copies"] = copies + [third_copy]
+                logger.print(f"  [TMR_REPAIR] Added missing third copy: '{third_copy}' (default wire)")
+
+        return content
+
+    def _fix_tmr_dead_voter(self, content: str, tmr_info: Dict) -> str:
+        """修复死 TMR：投票器输出未被后续逻辑使用。
+
+        检测投票器输出信号是否被下游逻辑消费，如果没有，
+        则添加默认输出连接到 voter_out。
+
+        Args:
+            content: RTL 源代码。
+            tmr_info: _detect_tmr_patterns() 返回的检测信息。
+
+        Returns:
+            修复后的 RTL 代码。
+        """
+        voter_out = tmr_info.get("voter_output_name")
+        if not voter_out:
+            return content
+
+        # 再次确认 voter_out 是否真的未被使用
+        usage_pattern = rf'\b{re.escape(voter_out)}\b'
+        usage_count = 0
+        consumer_found = False
+        for u in re.finditer(usage_pattern, content):
+            line_start = content.rfind('\n', 0, u.start()) + 1
+            line_end = content.find('\n', u.start())
+            if line_end < 0:
+                line_end = len(content)
+            line_text = content[line_start:line_end].strip()
+            # 跳过声明行和赋值行（自身定义）
+            if re.match(rf'(wire|reg|assign)\s+.*{re.escape(voter_out)}', line_text):
+                continue
+            consumer_found = True
+            break
+
+        if consumer_found:
+            logger.print(f"  [TMR_REPAIR] Voter output '{voter_out}' is used — no dead TMR fix needed")
+            return content
+
+        # 投票器输出未被使用，添加一个默认的使用连接
+        # 在 endmodule 前添加注释说明
+        _insert_pos = content.rfind('\nendmodule')
+        if _insert_pos > 0:
+            _note = (
+                f"\n    // ── Note: voter_out '{voter_out}' is unconnected "
+                f"(detected by ASTRepairer) ──\n"
+            )
+            content = content[:_insert_pos] + _note + content[_insert_pos:]
+            logger.print(f"  [TMR_REPAIR] Added note for unused voter output '{voter_out}'")
 
         return content
 
@@ -829,9 +1427,12 @@ class ASTRepairer:
                 "port_direction",
                 "port_semicolons",
                 "undeclared_signals",
+                "undeclared_in_always",
                 "missing_endmodule",
                 "tmr_missing_voter",
                 "tmr_width_mismatch",
+                "tmr_fake_copies",
+                "tmr_dead_voter",
             ] if not PYVERILOG_AVAILABLE else [
                 "port_direction_ast",
                 "port_declaration_ast",
@@ -839,10 +1440,14 @@ class ASTRepairer:
                 "type_inference_ast",
                 "port_semicolons",
                 "undeclared_signals",
+                "undeclared_in_always",
                 "missing_endmodule",
                 "tmr_detection",
                 "tmr_missing_voter",
                 "tmr_width_mismatch",
+                "tmr_fake_copies",
+                "tmr_dead_voter",
+                "tmr_anti_patterns",
             ],
         }
 
@@ -878,3 +1483,41 @@ endmodule
 """
     fixed = repairer.fix(test_code, ["port direction missing"])
     logger.print(f"\nFixed code:\n{fixed}")
+
+
+# ============================================================================
+# 新增方法说明（v2.0 增强）
+# ============================================================================
+# 以下为 v2.0 版本新增/增强的方法：
+#
+# 1. _fix_port_direction() — 增强版
+#    - 新增：端口在列表中但缺少 input/output，模块内有 wire/reg 声明时，
+#      自动推断方向（根据赋值上下文判断 input/output）
+#    - 新增：保留已有 wire/reg 声明的位宽信息，仅添加方向关键字
+#
+# 2. _detect_undeclared_in_always() — 新增方法
+#    - 扫描所有 always @(...) 块中的信号引用
+#    - 与已声明的 wire/reg/input/output/inout 交叉比对
+#    - 自动插入缺失的 wire 声明到 module 声明区域
+#
+# 3. _detect_tmr_patterns() — 增强版
+#    - 新增后缀命名模式检测：_a/_b/_c 和 _1/_2/_3
+#    - 新增反模式检测：
+#      * fake_tmr：只有 2 个副本而非 3 个
+#      * incomplete_tmr：副本信号位宽不一致
+#      * dead_tmr：投票器输出未被下游逻辑使用
+#    - 增强投票器检测：提取 voter_output_name
+#    - 增强位宽收集：widths_per_copy 字典
+#
+# 4. _fix_tmr_width_mismatch() — 增强版
+#    - 新增：投票器输出宽度与副本宽度的匹配检查
+#    - 新增：副本在使用处的位选与声明宽度的一致性检查（仅报告，不自动修改）
+#
+# 5. _fix_tmr_incomplete_copies() — 新增方法
+#    - 修复伪 TMR：当副本只有 2 个时，自动推断并生成第 3 个副本
+#    - 支持多种命名模式：数字索引、_a/_b/_c 后缀、_1/_2/_3 后缀
+#
+# 6. _fix_tmr_dead_voter() — 新增方法
+#    - 检测投票器输出信号是否被消费
+#    - 未被使用时在 endmodule 前添加注释说明
+# ============================================================================

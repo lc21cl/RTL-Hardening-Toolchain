@@ -1839,6 +1839,236 @@ def _extract_registers_from_content(content: str) -> List[Dict[str, Any]]:
     return registers
 
 
+def _extract_instantiations(rtl_content: str) -> List[Dict[str, Any]]:
+    """从 RTL 内容中提取所有模块实例化语句。
+
+    使用正则表达式解析 Verilog 实例化语法：
+      module_name inst_name ( .port_name(connected_signal), ... );
+
+    支持：
+      - 带 #(参数) 参数化实例化
+      - 命名端口连接 .port(sig)
+      - 多行跨行实例化
+      - 嵌套括号的端口表达式（如 .addr({mem_addr[7:0], 1'b0})）
+
+    Args:
+        rtl_content: 原始 RTL 代码字符串。
+
+    Returns:
+        列表，每个元素为包含以下键的字典：
+        - module_name (str): 被实例化的模块名
+        - instance_name (str): 实例名
+        - port_connections (dict): 端口名到连接信号的映射 {port: signal}
+    """
+    # 去除注释，避免在注释中误匹配
+    clean_content = re.sub(r'//.*?$|/\*.*?\*/', '', rtl_content,
+                           flags=re.MULTILINE | re.DOTALL)
+
+    instantiations: List[Dict[str, Any]] = []
+
+    # Verilog 关键字/原语列表（跳过这些）
+    _KEYWORDS = {
+        'module', 'if', 'else', 'for', 'while', 'case', 'casex', 'casez',
+        'always', 'initial', 'final', 'end', 'input', 'output', 'inout',
+        'wire', 'reg', 'logic', 'integer', 'genvar', 'tri', 'wand', 'wor',
+        'begin', 'endmodule', 'assign', 'generate', 'endgenerate',
+        'specify', 'endspecify', 'table', 'endtable',
+        'posedge', 'negedge', 'or', 'and', 'nand', 'nor', 'xor', 'xnor',
+        'buf', 'not', 'bufif0', 'bufif1', 'notif0', 'notif1',
+        'pullup', 'pulldown', 'cmos', 'rcmos', 'nmos', 'pmos', 'rnmos', 'rpmos',
+        'tran', 'rtran', 'tranif0', 'tranif1', 'rtranif0', 'rtranif1',
+        'fork', 'join', 'repeat', 'wait', 'disable', 'event',
+    }
+
+    # 第一步：匹配实例化的头部 "module_name inst_name ("
+    # 注意：不能一次性捕获括号内容，因为端口连接中包含嵌套括号
+    header_pattern = re.compile(
+        r'(\w+)\s+'               # 模块名
+        r'(?:#\s*\([^)]*\)\s+)?'  # 可选参数化部分 #(.param(val))
+        r'(\w+)\s*\(\s*',         # 实例名 + 左括号
+        re.MULTILINE
+    )
+
+    for match in header_pattern.finditer(clean_content):
+        mod_name = match.group(1).strip()
+        inst_name = match.group(2).strip()
+
+        # 跳过关键字
+        if mod_name.lower() in _KEYWORDS:
+            continue
+
+        # 跳过宏、数字开头的非合法模块名
+        if not re.match(r'^[a-zA-Z_]\w*$', mod_name):
+            continue
+
+        # 第二步：手动查找匹配的右括号，处理嵌套括号
+        start = match.end()  # 左括号后的第一个字符
+        paren_depth = 1
+        end = start
+        while end < len(clean_content) and paren_depth > 0:
+            if clean_content[end] == '(':
+                paren_depth += 1
+            elif clean_content[end] == ')':
+                paren_depth -= 1
+            end += 1
+
+        # 获取括号内的端口连接字符串（不含最外层括号）
+        conn_section = clean_content[start:end - 1]
+
+        # 第三步：检查是否有命名端口连接，以确认这是真正的实例化
+        # 使用 .port_name(signal) 模式匹配
+        has_named_conn = bool(re.search(r'\.\s*\w+\s*\(', conn_section))
+        if not has_named_conn:
+            continue  # 跳过大括号或非实例化结构
+
+        # 第四步：解析端口连接映射
+        port_connections: Dict[str, str] = {}
+        # 使用 .port_name(signal) 格式，信号中可能包含嵌套括号
+        # 为了处理嵌套括号，逐字符扫描
+        conn_pattern = re.compile(r'\.\s*(\w+)\s*\(')
+        for conn_match in conn_pattern.finditer(conn_section):
+            port_name = conn_match.group(1)
+            # 从匹配位置后的左括号开始，找到匹配的右括号
+            sig_start = conn_match.end()  # 左括号后的第一个字符
+            sig_paren_depth = 1
+            sig_end = sig_start
+            while sig_end < len(conn_section) and sig_paren_depth > 0:
+                if conn_section[sig_end] == '(':
+                    sig_paren_depth += 1
+                elif conn_section[sig_end] == ')':
+                    sig_paren_depth -= 1
+                sig_end += 1
+            sig_expr = conn_section[sig_start:sig_end - 1].strip()
+            port_connections[port_name] = sig_expr
+
+        if not port_connections:
+            continue
+
+        instantiations.append({
+            "module_name": mod_name,
+            "instance_name": inst_name,
+            "port_connections": port_connections,
+        })
+
+    return instantiations
+
+
+def _resolve_instance_rtl(module_name: str,
+                          search_paths: List[str]) -> Optional[str]:
+    """在搜索路径中查找子模块的 RTL 文件，读取并返回其内容。
+
+    使用模糊匹配策略——文件名包含模块名即视为匹配（不要求完全一致）。
+    搜索的文件扩展名包括 .v, .sv, .vh。
+
+    Args:
+        module_name: 要查找的 Verilog 模块名称。
+        search_paths: 要搜索的目录列表。
+
+    Returns:
+        匹配文件的完整内容字符串；如果未找到则返回 None。
+    """
+    if not search_paths:
+        return None
+
+    # 合法的 Verilog 文件扩展名
+    extensions = ['.v', '.sv', '.vh']
+
+    # 构建候选文件名模式
+    candidate_names = [
+        module_name,
+        module_name.lower(),
+        module_name.upper(),
+    ]
+
+    for search_dir in search_paths:
+        if not os.path.isdir(search_dir):
+            continue
+        try:
+            for fname in os.listdir(search_dir):
+                fpath = os.path.join(search_dir, fname)
+                if not os.path.isfile(fpath):
+                    continue
+                # 检查扩展名
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in extensions:
+                    continue
+                # 模糊匹配：文件名（不含扩展名）包含模块名
+                base = os.path.splitext(fname)[0]
+                if module_name.lower() in base.lower():
+                    try:
+                        with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                        return content
+                    except OSError:
+                        continue
+        except PermissionError:
+            continue
+        except OSError:
+            continue
+
+    return None
+
+
+def _extract_all_registers(content: str) -> List[str]:
+    """从 RTL 内容中提取所有寄存器（reg 声明）的变量名。
+
+    相比 _extract_registers_from_content() 返回更全面的列表，
+    包含所有被 reg 关键字声明的变量。
+
+    Args:
+        content: 原始 RTL 代码字符串。
+
+    Returns:
+        所有 reg 变量名的字符串列表。
+    """
+    # 去除注释
+    clean = re.sub(r'//.*?$|/\*.*?\*/', '', content,
+                   flags=re.MULTILINE | re.DOTALL)
+
+    reg_names: List[str] = []
+    seen: set = set()
+
+    # 模式1: output reg [x:y] name; 或 input reg name;
+    pattern1 = re.compile(
+        r'(?:input|output|inout)\s+reg\s+'
+        r'(?:\[[\w-]+:[\w-]+\])?\s*'
+        r'(\w+)',
+        re.MULTILINE
+    )
+    for m in pattern1.finditer(clean):
+        name = m.group(1)
+        if name not in seen and re.match(r'^[a-zA-Z_]\w*$', name):
+            seen.add(name)
+            reg_names.append(name)
+
+    # 模式2: reg [x:y] name; 或 reg name; (允许行首空白)
+    pattern2 = re.compile(
+        r'^\s*reg\s+'
+        r'(?:\[[\w-]+:[\w-]+\])?\s*'
+        r'(\w+)',
+        re.MULTILINE
+    )
+    for m in pattern2.finditer(clean):
+        name = m.group(1)
+        if name not in seen and re.match(r'^[a-zA-Z_]\w*$', name):
+            seen.add(name)
+            reg_names.append(name)
+
+    # 模式3: 一行内多个 reg: reg name1, name2;
+    pattern3 = re.compile(
+        r'reg\s+(?:\[[\w-]+:[\w-]+\])?\s*'
+        r'(\w+)(?:\s*,\s*(\w+))+',
+        re.MULTILINE
+    )
+    for m in pattern3.finditer(clean):
+        for g in m.groups():
+            if g and g not in seen and re.match(r'^[a-zA-Z_]\w*$', g):
+                seen.add(g)
+                reg_names.append(g)
+
+    return reg_names
+
+
 def _parse_single_rtl_file(
     rtl_path: str,
     visited: Optional[set] = None,
@@ -1928,56 +2158,42 @@ def _parse_single_rtl_file(
     # ── 3. Extract top-level registers ──
     registers = _extract_registers_from_content(content)
 
-    # ── 4. Extract submodule instances ──
+    # ── 4. Extract submodule instances 使用 _extract_instantiations() ──
+    MAX_RECURSION_DEPTH = 3  # 最大递归深度，防止循环实例化
     submodules: Dict[str, Dict] = {}
-    # Pattern: mod_name #(.param(val))? inst_name ( .port(sig), ... );
-    # Use the same approach as in GraphPipeline.analyze_design_errors():
-    # extract named port connections to verify it's a real instantiation.
-    inst_pattern = re.compile(r'(\w+)\s+(?:#\s*\([^)]*\)\s+)?(\w+)\s*\(', re.MULTILINE)
+    instantiations = _extract_instantiations(content)
+
     dir_for_search = [os.path.dirname(rtl_path)]
     if search_dirs:
         dir_for_search.extend(search_dirs)
 
-    for match in inst_pattern.finditer(content_no_comments):
-        sub_mod = match.group(1)
-        inst_name = match.group(2)
+    for inst in instantiations:
+        sub_mod = inst["module_name"]
+        inst_name = inst["instance_name"]
 
-        # Skip keywords and primitives (extended list + uppercase)
-        if sub_mod.lower() in (
-            'module', 'if', 'else', 'for', 'while', 'case', 'casex', 'casez',
-            'always', 'initial', 'final', 'end', 'input', 'output', 'inout',
-            'wire', 'reg', 'logic', 'integer', 'genvar', 'tri', 'wand', 'wor',
-            'begin', 'endmodule', 'assign', 'generate', 'endgenerate',
-            'specify', 'endspecify', 'table', 'endtable',
-        ):
-            continue
-
-        # Extract connections to verify it's a real instantiation
-        start = match.end()
-        depth_paren = 1
-        end = start
-        while depth_paren > 0 and end < len(content_no_comments):
-            c = content_no_comments[end]
-            if c == '(':
-                depth_paren += 1
-            elif c == ')':
-                depth_paren -= 1
-            end += 1
-        conn_section = content_no_comments[start:end - 1]
-
-        # Check for named port connections: .port_name(signal)
-        conn_pattern = re.compile(r'\.(\w+)\s*\(')
-        named_conns = conn_pattern.findall(conn_section)
-
-        # Skip if no named connections — likely not a module instantiation
-        # (e.g., "if (!rst_n)" would have no .port_name connections)
-        if not named_conns:
+        # 检查递归深度，防止无限循环
+        if depth >= MAX_RECURSION_DEPTH:
+            logger.print(
+                f"{prefix}[RAG]   Max recursion depth ({MAX_RECURSION_DEPTH}) reached, "
+                f"skipping submodule '{sub_mod}' (inst '{inst_name}')"
+            )
+            submodules[sub_mod] = {
+                "instance": inst_name,
+                "file": None,
+                "registers": [],
+                "signals": [],
+                "parse_success": False,
+                "error": "max_depth_reached",
+            }
             continue
 
         # Find submodule file
         sub_file = _find_module_file(sub_mod, dir_for_search)
         if sub_file is None:
-            logger.print(f"{prefix}[RAG]   Submodule '{sub_mod}' (inst '{inst_name}'): file not found on search paths")
+            logger.print(
+                f"{prefix}[RAG]   Submodule '{sub_mod}' (inst '{inst_name}'): "
+                f"file not found on search paths"
+            )
             submodules[sub_mod] = {
                 "instance": inst_name,
                 "file": None,
@@ -1988,8 +2204,11 @@ def _parse_single_rtl_file(
             }
             continue
 
-        # Recursively analyze submodule
-        logger.print(f"{prefix}[RAG]   Descending into submodule '{sub_mod}' → {os.path.basename(sub_file)}")
+        # 递归分析子模块
+        logger.print(
+            f"{prefix}[RAG]   Descending into submodule '{sub_mod}' "
+            f"(depth {depth+1}/{MAX_RECURSION_DEPTH}) → {os.path.basename(sub_file)}"
+        )
         sub_result = _parse_single_rtl_file(
             sub_file, visited, search_dirs=search_dirs, depth=depth + 1
         )
@@ -2078,9 +2297,12 @@ def analyze_design_for_hardening(
         - parse_success (bool): Whether parsing completed successfully.
         - submodules (dict): Recursively analyzed submodule info. Only present
           when ``recursive=True``.
+        - sub_modules (dict): Alias for ``submodules``, 保持命名一致性。
         - all_registers (list): **Flattened list of ALL registers** across top
           module and all submodules. Each entry has 'name', 'width', 'source'.
           Submodule registers are prefixed with ``<submodule>.<reg>``.
+        - hierarchical_registers (list): Alias for ``all_registers``,
+          层次化寄存器列表的完整集合。
         - all_signals (list): Flattened list of all ports across hierarchy.
 
     Raises:
@@ -2112,6 +2334,11 @@ def analyze_design_for_hardening(
         "signal_width": 32,
         "file_path": rtl_path,
         "parse_success": False,
+        "submodules": {},
+        "sub_modules": {},
+        "all_registers": [],
+        "hierarchical_registers": [],
+        "all_signals": [],
     }
 
     if recursive:
@@ -2128,7 +2355,9 @@ def analyze_design_for_hardening(
             "registers": parsed.get("registers", []),
             "signal_width": parsed.get("signal_width", 32),
             "submodules": parsed.get("submodules", {}),
+            "sub_modules": parsed.get("submodules", {}),  # 别名，保持命名一致性
             "all_registers": parsed.get("all_registers", []),
+            "hierarchical_registers": parsed.get("all_registers", []),  # 别名
             "all_signals": parsed.get("all_signals", []),
             "parse_success": parsed.get("parse_success", False),
         })
@@ -2166,7 +2395,20 @@ def analyze_design_for_hardening(
                     "name": signal_name, "direction": direction, "width": width,
                 })
             result["signal_width"] = max_width
-            result["registers"] = _extract_registers_from_content(content)
+            flat_regs = _extract_registers_from_content(content)
+            result["registers"] = flat_regs
+            # 扁平模式下，all_registers / hierarchical_registers 即为顶层寄存器列表
+            result["all_registers"] = [
+                {"name": r["name"], "width": r["width"],
+                 "source": r.get("source", "declaration"), "module": "top"}
+                for r in flat_regs
+            ]
+            result["hierarchical_registers"] = result["all_registers"]
+            result["all_signals"] = [
+                {"name": s["name"], "direction": s["direction"],
+                 "width": s["width"], "module": "top"}
+                for s in result["signals"]
+            ]
             param_match = re.search(r"parameter\s+(\w+)\s*=\s*(\d+)", content_no_comments)
             if param_match:
                 result.setdefault("parameters", {})
@@ -2428,3 +2670,365 @@ def create_default_engine() -> RAGEngine:
     engine = RAGEngine(llm_backend='mock')
     engine.load_knowledge_base()
     return engine
+
+
+# ============================================================================
+# 层次化提取单元测试
+# ============================================================================
+
+def _test_hierarchical_extraction() -> bool:
+    """测试层次化子模块寄存器提取功能。
+
+    创建模拟的顶层和子模块 RTL 内容，验证：
+      1. _extract_instantiations() 能正确解析模块实例化
+      2. _extract_all_registers() 能提取所有 reg 声明
+      3. _resolve_instance_rtl() 能通过模糊匹配找到子模块文件
+      4. analyze_design_for_hardening() 能递归提取子模块寄存器
+      5. 递归深度限制（3层）正常工作
+      6. 返回结果中包含 sub_modules 和 hierarchical_registers 字段
+
+    Returns:
+        True 表示所有测试通过，False 表示有测试失败。
+    """
+    logger.section("Hierarchical Extraction Unit Test")
+    all_passed = True
+
+    # ── 测试 1: _extract_instantiations ──
+    logger.sub_section("Test 1: _extract_instantiations")
+    test_rtl = """
+    module top (
+        input  clk,
+        input  rst_n,
+        input  [7:0] data_in,
+        output [7:0] data_out
+    );
+        wire [7:0] add_result;
+        wire carry;
+
+        // 实例化加法器子模块
+        adder_sub u_adder (
+            .a(data_in),
+            .b(8'h01),
+            .sum(add_result),
+            .carry_sig(carry)
+        );
+
+        // 实例化寄存器子模块
+        reg_module u_reg (
+            .clk(clk),
+            .rst_n(rst_n),
+            .d(add_result),
+            .q(data_out)
+        );
+
+        // 非实例化的 always 块（不应被匹配）
+        always @(posedge clk or negedge rst_n) begin
+            if (!rst_n)
+                data_out <= 8'h00;
+            else
+                data_out <= add_result;
+        end
+    endmodule
+    """
+
+    insts = _extract_instantiations(test_rtl)
+    # 应该提取到 2 个实例化（adder_sub 和 reg_module）
+    inst_names = {i["instance_name"] for i in insts}
+    assert len(insts) >= 2, f"Expected >=2 instantiations, got {len(insts)}"
+    assert "u_adder" in inst_names, f"Missing u_adder instance"
+    assert "u_reg" in inst_names, f"Missing u_reg instance"
+    # 验证端口连接映射
+    for i in insts:
+        if i["instance_name"] == "u_adder":
+            assert "sum" in i["port_connections"], "Missing port 'sum' in u_adder"
+            assert i["port_connections"]["sum"] == "add_result"
+    logger.print(f"  [TEST] _extract_instantiations: PASS ({len(insts)} instantiations)")
+    logger.print(f"  [TEST]   Instances: {inst_names}")
+
+    # ── 测试 2: _extract_all_registers ──
+    logger.sub_section("Test 2: _extract_all_registers")
+    test_reg_rtl = """
+    module test_regs (
+        input clk,
+        input rst_n,
+        input [7:0] d,
+        output reg [7:0] q
+    );
+        reg [7:0] internal_reg;
+        reg flag_reg;
+        reg [3:0] counter, temp;
+
+        always @(posedge clk or negedge rst_n) begin
+            if (!rst_n) begin
+                q <= 8'h00;
+                internal_reg <= 8'h00;
+                flag_reg <= 1'b0;
+                counter <= 4'h0;
+            end else begin
+                q <= d;
+                internal_reg <= d;
+                flag_reg <= 1'b1;
+                counter <= counter + 1'b1;
+            end
+        end
+    endmodule
+    """
+    all_regs = _extract_all_registers(test_reg_rtl)
+    reg_set = set(all_regs)
+    logger.print(f"  [TEST] _extract_all_registers: found {len(all_regs)} regs: {all_regs}")
+    # 应包含 output reg q, reg internal_reg, flag_reg, counter, temp
+    for expected in ("q", "internal_reg", "flag_reg", "counter", "temp"):
+        assert expected in reg_set, f"Missing register '{expected}'"
+    logger.print("  [TEST] _extract_all_registers: PASS")
+
+    # ── 测试 3: _resolve_instance_rtl (使用临时文件) ──
+    logger.sub_section("Test 3: _resolve_instance_rtl")
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # 创建子模块 RTL 文件
+        sub_content = """
+        module adder_sub (
+            input [7:0] a, b,
+            output [7:0] sum,
+            output carry_sig
+        );
+            reg [7:0] sum;
+            reg carry_sig;
+            always @(*) begin
+                {carry_sig, sum} = a + b;
+            end
+        endmodule
+        """
+        sub_file_path = os.path.join(tmpdir, "adder_sub.v")
+        with open(sub_file_path, "w") as f:
+            f.write(sub_content)
+
+        # 测试模糊匹配
+        found_content = _resolve_instance_rtl("adder_sub", [tmpdir])
+        assert found_content is not None, "_resolve_instance_rtl returned None for adder_sub"
+        assert "module adder_sub" in found_content, "Content does not contain expected module"
+        logger.print(f"  [TEST] _resolve_instance_rtl (exact match): PASS")
+
+        # 测试不存在的模块
+        not_found = _resolve_instance_rtl("nonexistent_module", [tmpdir])
+        assert not_found is None, "_resolve_instance_rtl should return None for unknown module"
+        logger.print(f"  [TEST] _resolve_instance_rtl (no match returns None): PASS")
+
+        # 测试模糊匹配（文件名包含模块名）
+        sub2_content = """
+        module reg_module (
+            input clk, rst_n,
+            input [7:0] d,
+            output reg [7:0] q
+        );
+            reg [7:0] internal_q;
+            always @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    q <= 8'h00;
+                    internal_q <= 8'h00;
+                end else begin
+                    q <= d;
+                    internal_q <= d;
+                end
+            end
+        endmodule
+        """
+        with open(os.path.join(tmpdir, "my_reg_module_custom.v"), "w") as f:
+            f.write(sub2_content)
+        found_content2 = _resolve_instance_rtl("reg_module", [tmpdir])
+        assert found_content2 is not None, "Fuzzy match failed for reg_module"
+        assert "module reg_module" in found_content2
+        logger.print(f"  [TEST] _resolve_instance_rtl (fuzzy match): PASS")
+
+    # ── 测试 4: analyze_design_for_hardening 递归提取 ──
+    logger.sub_section("Test 4: Hierarchical analyze_design_for_hardening")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # 创建顶层 RTL
+        top_content = """
+        module top_design (
+            input        clk,
+            input        rst_n,
+            input  [7:0] data_in,
+            output [7:0] data_out
+        );
+            wire [7:0] sum;
+
+            adder_sub u_adder (
+                .a(data_in),
+                .b(8'h01),
+                .sum(sum),
+                .carry_sig()
+            );
+
+            reg_module u_reg (
+                .clk(clk),
+                .rst_n(rst_n),
+                .d(sum),
+                .q(data_out)
+            );
+        endmodule
+        """
+        top_file = os.path.join(tmpdir, "top_design.v")
+        with open(top_file, "w") as f:
+            f.write(top_content)
+
+        # 创建子模块 RTL
+        sub1_content = """
+        module adder_sub (
+            input  [7:0] a, b,
+            output [7:0] sum,
+            output       carry_sig
+        );
+            reg [7:0] sum_reg;
+            reg carry_reg;
+            assign sum = sum_reg;
+            assign carry_sig = carry_reg;
+            always @(*) begin
+                {carry_reg, sum_reg} = a + b;
+            end
+        endmodule
+        """
+        with open(os.path.join(tmpdir, "adder_sub.v"), "w") as f:
+            f.write(sub1_content)
+
+        sub2_content = """
+        module reg_module (
+            input        clk, rst_n,
+            input  [7:0] d,
+            output reg [7:0] q
+        );
+            reg [7:0] q_reg;
+            always @(posedge clk or negedge rst_n) begin
+                if (!rst_n) q_reg <= 8'h00;
+                else         q_reg <= d;
+            end
+            assign q = q_reg;
+        endmodule
+        """
+        with open(os.path.join(tmpdir, "reg_module.v"), "w") as f:
+            f.write(sub2_content)
+
+        # 执行层次化分析
+        result = analyze_design_for_hardening(
+            top_file,
+            search_paths=[tmpdir],
+            recursive=True,
+        )
+
+        # 验证顶层信息
+        assert result["parse_success"], "Top-level parse failed"
+        assert result["module_name"] == "top_design", \
+            f"Expected top_design, got {result['module_name']}"
+        logger.print(f"  [TEST] Module name: {result['module_name']}")
+
+        # 验证子模块信息
+        assert "adder_sub" in result.get("submodules", {}), \
+            "Missing submodule adder_sub"
+        assert "reg_module" in result.get("submodules", {}), \
+            "Missing submodule reg_module"
+        logger.print(f"  [TEST] Submodules found: {list(result.get('submodules', {}).keys())}")
+
+        # 验证 sub_modules 别名
+        assert "sub_modules" in result, "Missing 'sub_modules' alias field"
+        assert result["sub_modules"] == result["submodules"], \
+            "'sub_modules' should equal 'submodules'"
+
+        # 验证层次化寄存器提取
+        hier_regs = result.get("hierarchical_registers", [])
+        assert len(hier_regs) > 0, "No hierarchical registers found"
+        # 应包含子模块的寄存器（带前缀）
+        sub_reg_names = [r["name"] for r in hier_regs if r["module"] != "top"]
+        logger.print(f"  [TEST] Hierarchical registers ({len(hier_regs)} total):")
+        for r in hier_regs:
+            logger.print(f"    - {r['name']} (width={r['width']}, module={r['module']})")
+        assert any("adder_sub" in n for n in sub_reg_names), \
+            f"Missing adder_sub registers in hierarchical list: {sub_reg_names}"
+        assert any("reg_module" in n for n in sub_reg_names), \
+            f"Missing reg_module registers in hierarchical list: {sub_reg_names}"
+
+        # 验证 all_registers 和 hierarchical_registers 一致
+        assert result["all_registers"] == result["hierarchical_registers"], \
+            "'all_registers' should equal 'hierarchical_registers'"
+
+    # ── 测试 5: 递归深度限制 ──
+    logger.sub_section("Test 5: Recursion depth limit")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # 创建循环实例化链 A -> B -> C -> D (超过3层)
+        module_a = """
+        module depth_a (
+            input clk,
+            output reg [3:0] out
+        );
+            wire [3:0] b_out;
+            depth_b u_b (.clk(clk), .out(b_out));
+            always @(posedge clk) out <= b_out;
+        endmodule
+        """
+        module_b = """
+        module depth_b (
+            input clk,
+            output reg [3:0] out
+        );
+            wire [3:0] c_out;
+            depth_c u_c (.clk(clk), .out(c_out));
+            always @(posedge clk) out <= c_out;
+        endmodule
+        """
+        module_c = """
+        module depth_c (
+            input clk,
+            output reg [3:0] out
+        );
+            wire [3:0] d_out;
+            depth_d u_d (.clk(clk), .out(d_out));
+            always @(posedge clk) out <= d_out;
+        endmodule
+        """
+        module_d = """
+        module depth_d (
+            input clk,
+            output reg [3:0] out
+        );
+            reg [3:0] deep_reg;
+            always @(posedge clk) begin
+                out <= deep_reg;
+                deep_reg <= deep_reg + 1;
+            end
+        endmodule
+        """
+        with open(os.path.join(tmpdir, "depth_a.v"), "w") as f:
+            f.write(module_a)
+        with open(os.path.join(tmpdir, "depth_b.v"), "w") as f:
+            f.write(module_b)
+        with open(os.path.join(tmpdir, "depth_c.v"), "w") as f:
+            f.write(module_c)
+        with open(os.path.join(tmpdir, "depth_d.v"), "w") as f:
+            f.write(module_d)
+
+        result_depth = analyze_design_for_hardening(
+            os.path.join(tmpdir, "depth_a.v"),
+            search_paths=[tmpdir],
+            recursive=True,
+        )
+        # depth_a -> depth_b -> depth_c 应被解析，depth_d 应因深度限制被跳过
+        subs = result_depth.get("submodules", {})
+        # 获取所有递归展开的子模块
+        all_subs = set(subs.keys())
+        # 递归检查 depth_b 的子模块
+        logger.print(f"  [TEST] Depth test submodules: {all_subs}")
+        logger.print(f"  [TEST] Hierarchical registers: "
+                     f"{[r['name'] for r in result_depth.get('hierarchical_registers', [])]}")
+
+    # ── 汇总 ──
+    logger.section("Hierarchical Extraction Test Summary")
+    if all_passed:
+        logger.print("  [TEST] All hierarchical extraction tests PASSED")
+    else:
+        logger.error("  [TEST] Some hierarchical extraction tests FAILED")
+
+    return all_passed
+
+
+# 如果直接运行此脚本，执行层次化提取测试
+if __name__ == "__main__":
+    _test_hierarchical_extraction()

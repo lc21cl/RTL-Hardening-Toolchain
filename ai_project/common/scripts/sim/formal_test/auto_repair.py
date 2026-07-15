@@ -688,6 +688,33 @@ class SyntaxFixer:
         (85, "missing_endgenerate",
          r'\bgenerate\b(?![\s\S]*?\bendgenerate\b)[\s\S]*?(?=\bendmodule\b)',
          r'\g<0>\nendgenerate\n'),
+
+        # ── v3.3 新增: 4 种常见模式 ──
+
+        # Output signal assigned in always block but declared without 'reg'
+        # e.g., "output [7:0] data;" used inside "always @(posedge clk)" → "output reg [7:0] data;"
+        # Only applies when followed by ',' or ')' indicating port list context
+        (65, "output_reg_type",
+         r'(output)\s+(?!reg)(\[\s*\d+\s*:\s*\d+\s*\])\s*(\w+)\s*,',
+         r'\1 reg \2 \3,'),
+
+        # Signal declared as wire but assigned via non-blocking in always block
+        # e.g., "wire [7:0] data;" with "data <= value;" in always
+        # Fix: change wire to reg
+        (55, "wire_to_reg_in_always",
+         r'(wire)\s+(\[\s*\d+\s*:\s*\d+\s*\])\s*(\w+)\s*;\s*\n(?!.*(?:assign|input|output))',
+         r'reg  \2 \3;\n'),
+
+        # Trailing comma before closing paren in port list
+        # e.g., "    input  wire       clk,\n    )" → remove trailing comma
+        (60, "trailing_comma_port",
+         r',\s*\n\s*\)',
+         r'\n)'),
+
+        # Double semicolon (stray ;;)  
+        (40, "double_semicolon",
+         r';;',
+         r';'),
     ]
 
     _FIX_PATTERNS.sort(key=lambda x: -x[0])  # highest priority first

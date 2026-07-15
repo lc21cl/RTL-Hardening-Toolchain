@@ -46,3 +46,24 @@ temp/
 __check_*.py
 __verify_*.py
 __test_*.py
+
+# Working / temp directories
+1/
+Test/
+tools/
+oss-cad-suite/
+oss-cad-suite.exe
+指导方案/
+第一周调研汇报/
+第三周调研汇报/
+第五周汇报/
+第四周汇报/
+项目方案/
+
+# Generated parser files
+parser.out
+parsetab.py
+work-obj93.cf
+
+# Download logs
+wget-log*
