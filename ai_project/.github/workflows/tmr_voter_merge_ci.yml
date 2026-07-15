@@ -1,0 +1,271 @@
+name: TMR Voter Merge CI/CD
+
+on:
+  push:
+    branches: [ main, develop, phase2 ]
+    paths:
+      - 'common/scripts/**'
+      - 'phase2/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'common/scripts/**'
+      - 'phase2/**'
+      - '.github/workflows/**'
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      test_scale:
+        description: '测试规模 (small/medium/large)'
+        required: false
+        default: 'medium'
+        type: choice
+        options:
+          - small
+          - medium
+          - large
+
+jobs:
+  voter-merge-unit-test:
+    name: Voter Merge Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: pip
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-cov pyyaml
+
+    - name: Run Day 2 Voter Merge Unit Tests
+      run: |
+        cd common/scripts
+        pytest test_voter_merge_unit.py -v --cov=tmr_transformer --cov-report=xml
+
+    - name: Run Full Mode Tests
+      run: |
+        cd common/scripts
+        pytest test_full_mode.py -v
+
+    - name: Run Reg Only Unit Tests
+      run: |
+        cd common/scripts
+        pytest test_reg_only_unit.py -v
+
+    - name: Upload coverage report
+      uses: codecov/codecov-action@v4
+      with:
+        file: common/scripts/coverage.xml
+        flags: voter-merge-unit
+
+  equivalence-verification:
+    name: Equivalence Verification
+    runs-on: ubuntu-latest
+    needs: [voter-merge-unit-test]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: pip
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pyyaml
+
+    - name: Run Equivalence Verification Tests
+      run: |
+        cd common/scripts
+        python test_equivalence_verification.py
+
+  sva-assertion-test:
+    name: SVA Assertion Test
+    runs-on: ubuntu-latest
+    needs: [equivalence-verification]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: pip
+
+    - name: Install iverilog
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y iverilog
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+
+    - name: Run SVA Assertion Regression Test
+      run: |
+        cd common/scripts/sim
+        python run_sva_regression.py --compat --report
+
+    - name: Upload SVA coverage report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: sva-coverage-report
+        path: |
+          common/scripts/reports/sva_coverage_report.json
+          common/scripts/reports/sva_regression_result.json
+          common/scripts/reports/SVA_REGRESSION_REPORT.md
+
+  regression-test:
+    name: Regression Test
+    runs-on: ubuntu-latest
+    needs: [sva-assertion-test]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: pip
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pyyaml
+
+    - name: Run Regression Test
+      run: |
+        cd common/scripts
+        python test_regression.py
+
+  voter-merge-integration-test:
+    name: Voter Merge Integration Tests
+    runs-on: ubuntu-latest
+    needs: [voter-merge-unit-test]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: pip
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pyyaml
+
+    - name: Run Integration Tests
+      run: |
+        cd common/scripts
+        pytest -v -k "voter_merge or full_mode or reg_only"
+
+    - name: Upload test artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: voter-merge-test-artifacts
+        path: |
+          common/scripts/*.log
+          common/scripts/*.json
+          common/scripts/*.v
+
+  build-and-verify:
+    name: Build and Verify
+    runs-on: ubuntu-latest
+    needs: [voter-merge-unit-test, equivalence-verification, regression-test]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+        cache: pip
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine pyyaml
+
+    - name: Build package
+      run: |
+        cd common/scripts
+        python setup.py sdist bdist_wheel
+
+    - name: Verify package installation
+      run: |
+        pip install dist/*.whl
+        python -c "from tmr_transformer import TMRTransformer; print('✅ 包安装成功')"
+
+    - name: Upload package
+      uses: actions/upload-artifact@v4
+      with:
+        name: tmr-transformer-package
+        path: common/scripts/dist/
+
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [build-and-verify, voter-merge-integration-test]
+    if: always()
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check test results
+      run: |
+        echo "=== Day 2 Voter Merge CI/CD 结果汇总 ==="
+        echo ""
+        echo "触发事件: ${{ github.event_name }}"
+        echo "分支: ${{ github.ref }}"
+        echo "提交: ${{ github.sha }}"
+        echo ""
+        
+        if [[ "${{ needs.voter-merge-unit-test.result }}" == "success" ]]; then
+          echo "✅ 单元测试: 通过"
+        else
+          echo "❌ 单元测试: 失败"
+        fi
+        
+        if [[ "${{ needs.equivalence-verification.result }}" == "success" ]]; then
+          echo "✅ 等价性验证: 通过"
+        else
+          echo "❌ 等价性验证: 失败"
+        fi
+        
+        if [[ "${{ needs.regression-test.result }}" == "success" ]]; then
+          echo "✅ 回归测试: 通过"
+        else
+          echo "❌ 回归测试: 失败"
+        fi
+        
+        if [[ "${{ needs.build-and-verify.result }}" == "success" ]]; then
+          echo "✅ 构建验证: 通过"
+        else
+          echo "❌ 构建验证: 失败"
+        fi
+        
+        echo ""
+        echo "所有测试完成时间: $(date)"

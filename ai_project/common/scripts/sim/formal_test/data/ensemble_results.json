@@ -1,0 +1,21 @@
+{
+  "ensemble_test": {
+    "f1": 0.771414,
+    "precision": 0.701173,
+    "recall": 0.857296,
+    "accuracy": 0.830973,
+    "auc_roc": 0.928206
+  },
+  "ensemble_val_best_threshold": 0.56,
+  "ensemble_val_f1": 0.759113,
+  "num_models": 3,
+  "seeds": [
+    42,
+    456,
+    1111
+  ],
+  "config": {
+    "hidden_channels": 128,
+    "pos_weight": 2.075238253660356
+  }
+}

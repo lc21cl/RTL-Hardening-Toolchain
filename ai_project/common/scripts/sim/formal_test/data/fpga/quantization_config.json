@@ -1,0 +1,18 @@
+{
+  "quantization": "int8",
+  "scale_factors": {
+    "input": 255.0,
+    "layer1": 127.0,
+    "layer2": 127.0,
+    "output": 255.0
+  },
+  "zero_points": {
+    "input": 0,
+    "layer1": 0,
+    "layer2": 0,
+    "output": 0
+  },
+  "quantization_method": "symmetric",
+  "quantize_weights": true,
+  "quantize_activations": true
+}

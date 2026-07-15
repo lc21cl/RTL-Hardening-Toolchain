@@ -1,0 +1,619 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<spirit:component xmlns:spirit="http://www.spiritconsortium.org/XMLSchema/SPIRIT/1685-2009"
+                  xmlns:xilinx="http://www.xilinx.com"
+                  spirit:vendor="user.org"
+                  spirit:library="tmr"
+                  spirit:name="tmr_voter_6ch"
+                  spirit:version="1.0">
+  <spirit:vendor>user.org</spirit:vendor>
+  <spirit:library>tmr</spirit:library>
+  <spirit:name>tmr_voter_6ch</spirit:name>
+  <spirit:version>1.0</spirit:version>
+
+  <spirit:busInterfaces>
+    <spirit:busInterface>
+      <spirit:name>clk</spirit:name>
+      <spirit:busType spirit:vendor="xilinx.com" spirit:library="signal" spirit:name="clock" spirit:version="1.0"/>
+      <spirit:abstractionType spirit:vendor="xilinx.com" spirit:library="signal" spirit:name="clock_rtl" spirit:version="1.0"/>
+      <spirit:portMaps>
+        <spirit:portMap>
+          <spirit:logicalPort>
+            <spirit:name>CLK</spirit:name>
+          </spirit:logicalPort>
+          <spirit:physicalPort>
+            <spirit:name>clk</spirit:name>
+          </spirit:physicalPort>
+        </spirit:portMap>
+      </spirit:portMaps>
+      <spirit:parameters>
+        <spirit:parameter>
+          <spirit:name>ASSOCIATED_BUSIF</spirit:name>
+          <spirit:value>clk</spirit:value>
+        </spirit:parameter>
+        <spirit:parameter>
+          <spirit:name>ASSOCIATED_RESET</spirit:name>
+          <spirit:value>rst_n</spirit:value>
+        </spirit:parameter>
+      </spirit:parameters>
+    </spirit:busInterface>
+
+    <spirit:busInterface>
+      <spirit:name>rst_n</spirit:name>
+      <spirit:busType spirit:vendor="xilinx.com" spirit:library="signal" spirit:name="reset" spirit:version="1.0"/>
+      <spirit:abstractionType spirit:vendor="xilinx.com" spirit:library="signal" spirit:name="reset_rtl" spirit:version="1.0"/>
+      <spirit:portMaps>
+        <spirit:portMap>
+          <spirit:logicalPort>
+            <spirit:name>RST</spirit:name>
+          </spirit:logicalPort>
+          <spirit:physicalPort>
+            <spirit:name>rst_n</spirit:name>
+          </spirit:physicalPort>
+        </spirit:portMap>
+      </spirit:portMaps>
+      <spirit:parameters>
+        <spirit:parameter>
+          <spirit:name>POLARITY</spirit:name>
+          <spirit:value>ACTIVE_LOW</spirit:value>
+        </spirit:parameter>
+      </spirit:parameters>
+    </spirit:busInterface>
+
+    <spirit:busInterface>
+      <spirit:name>core1_ready</spirit:name>
+      <spirit:busType spirit:vendor="xilinx.com" spirit:library="signal" spirit:name="data" spirit:version="1.0"/>
+      <spirit:abstractionType spirit:vendor="xilinx.com" spirit:library="signal" spirit:name="data_rtl" spirit:version="1.0"/>
+      <spirit:portMaps>
+        <spirit:portMap>
+          <spirit:logicalPort>
+            <spirit:name>DATA</spirit:name>
+          </spirit:logicalPort>
+          <spirit:physicalPort>
+            <spirit:name>core1_ready</spirit:name>
+          </spirit:physicalPort>
+        </spirit:portMap>
+      </spirit:portMaps>
+    </spirit:busInterface>
+
+    <spirit:busInterface>
+      <spirit:name>core2_ready</spirit:name>
+      <spirit:busType spirit:vendor="xilinx.com" spirit:library="signal" spirit:name="data" spirit:version="1.0"/>
+      <spirit:abstractionType spirit:vendor="xilinx.com" spirit:library="signal" spirit:name="data_rtl" spirit:version="1.0"/>
+      <spirit:portMaps>
+        <spirit:portMap>
+          <spirit:logicalPort>
+            <spirit:name>DATA</spirit:name>
+          </spirit:logicalPort>
+          <spirit:physicalPort>
+            <spirit:name>core2_ready</spirit:name>
+          </spirit:physicalPort>
+        </spirit:portMap>
+      </spirit:portMaps>
+    </spirit:busInterface>
+
+    <spirit:busInterface>
+      <spirit:name>core3_ready</spirit:name>
+      <spirit:busType spirit:vendor="xilinx.com" spirit:library="signal" spirit:name="data" spirit:version="1.0"/>
+      <spirit:abstractionType spirit:vendor="xilinx.com" spirit:library="signal" spirit:name="data_rtl" spirit:version="1.0"/>
+      <spirit:portMaps>
+        <spirit:portMap>
+          <spirit:logicalPort>
+            <spirit:name>DATA</spirit:name>
+          </spirit:logicalPort>
+          <spirit:physicalPort>
+            <spirit:name>core3_ready</spirit:name>
+          </spirit:physicalPort>
+        </spirit:portMap>
+      </spirit:portMaps>
+    </spirit:busInterface>
+
+    <spirit:busInterface>
+      <spirit:name>voted_ready</spirit:name>
+      <spirit:busType spirit:vendor="xilinx.com" spirit:library="signal" spirit:name="data" spirit:version="1.0"/>
+      <spirit:abstractionType spirit:vendor="xilinx.com" spirit:library="signal" spirit:name="data_rtl" spirit:version="1.0"/>
+      <spirit:portMaps>
+        <spirit:portMap>
+          <spirit:logicalPort>
+            <spirit:name>DATA</spirit:name>
+          </spirit:logicalPort>
+          <spirit:physicalPort>
+            <spirit:name>voted_ready</spirit:name>
+          </spirit:physicalPort>
+        </spirit:portMap>
+      </spirit:portMaps>
+    </spirit:busInterface>
+  </spirit:busInterfaces>
+
+  <spirit:model>
+    <spirit:views>
+      <spirit:view>
+        <spirit:name>verilog</spirit:name>
+        <spirit:envIdentifier>verilogSource:vivado.xilinx.com:verilog.rtl</spirit:envIdentifier>
+        <spirit:fileSource>
+          <spirit:file>
+            <spirit:name>../src/tmr_voter_6ch_xilinx.v</spirit:name>
+            <spirit:fileType>verilogSource</spirit:fileType>
+            <spirit:logicalName>tmr_voter_6ch_xilinx</spirit:logicalName>
+          </spirit:file>
+        </spirit:fileSource>
+      </spirit:view>
+    </spirit:views>
+
+    <spirit:ports>
+      <!-- 时钟与复位 -->
+      <spirit:port>
+        <spirit:name>clk</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>clk</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>System clock input</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>rst_n</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>rst_n</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Active-low system reset</spirit:description>
+      </spirit:port>
+
+      <!-- ch-0: ready -->
+      <spirit:port>
+        <spirit:name>core1_ready</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core1_ready</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 1 mmio_in.ready</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>core2_ready</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core2_ready</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 2 mmio_in.ready</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>core3_ready</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core3_ready</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 3 mmio_in.ready</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>voted_ready</spirit:name>
+        <spirit:wire>
+          <spirit:direction>out</spirit:direction>
+          <spirit:vectorName>voted_ready</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Voted mmio_in.ready (Majority-3 of core1/2/3_ready)</spirit:description>
+      </spirit:port>
+
+      <!-- ch-1: boot_valid -->
+      <spirit:port>
+        <spirit:name>core1_boot_valid</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core1_boot_valid</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 1 boot_valid</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>core2_boot_valid</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core2_boot_valid</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 2 boot_valid</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>core3_boot_valid</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core3_boot_valid</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 3 boot_valid</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>voted_boot_valid</spirit:name>
+        <spirit:wire>
+          <spirit:direction>out</spirit:direction>
+          <spirit:vectorName>voted_boot_valid</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Voted boot_valid (Majority-3 of core1/2/3_boot_valid)</spirit:description>
+      </spirit:port>
+
+      <!-- ch-2: exit_valid -->
+      <spirit:port>
+        <spirit:name>core1_exit_valid</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core1_exit_valid</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 1 exit_valid</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>core2_exit_valid</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core2_exit_valid</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 2 exit_valid</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>core3_exit_valid</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core3_exit_valid</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 3 exit_valid</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>voted_exit_valid</spirit:name>
+        <spirit:wire>
+          <spirit:direction>out</spirit:direction>
+          <spirit:vectorName>voted_exit_valid</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Voted exit_valid (Majority-3 of core1/2/3_exit_valid)</spirit:description>
+      </spirit:port>
+
+      <!-- ch-3: exit_code (8-bit) -->
+      <spirit:port>
+        <spirit:name>core1_exit_code</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core1_exit_code</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>7</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 1 exit_code[7:0]</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>core2_exit_code</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core2_exit_code</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>7</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 2 exit_code[7:0]</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>core3_exit_code</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core3_exit_code</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>7</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 3 exit_code[7:0]</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>voted_exit_code</spirit:name>
+        <spirit:wire>
+          <spirit:direction>out</spirit:direction>
+          <spirit:vectorName>voted_exit_code</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>7</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Voted exit_code[7:0] (Majority-3 per bit)</spirit:description>
+      </spirit:port>
+
+      <!-- ch-4: print_valid -->
+      <spirit:port>
+        <spirit:name>core1_print_valid</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core1_print_valid</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 1 print_valid</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>core2_print_valid</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core2_print_valid</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 2 print_valid</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>core3_print_valid</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core3_print_valid</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 3 print_valid</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>voted_print_valid</spirit:name>
+        <spirit:wire>
+          <spirit:direction>out</spirit:direction>
+          <spirit:vectorName>voted_print_valid</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>0</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Voted print_valid (Majority-3 of core1/2/3_print_valid)</spirit:description>
+      </spirit:port>
+
+      <!-- ch-5: print_data (32-bit) -->
+      <spirit:port>
+        <spirit:name>core1_print_data</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core1_print_data</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>31</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 1 print_data[31:0]</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>core2_print_data</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core2_print_data</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>31</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 2 print_data[31:0]</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>core3_print_data</spirit:name>
+        <spirit:wire>
+          <spirit:direction>in</spirit:direction>
+          <spirit:vectorName>core3_print_data</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>31</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Core 3 print_data[31:0]</spirit:description>
+      </spirit:port>
+
+      <spirit:port>
+        <spirit:name>voted_print_data</spirit:name>
+        <spirit:wire>
+          <spirit:direction>out</spirit:direction>
+          <spirit:vectorName>voted_print_data</spirit:vectorName>
+          <spirit:vector>
+            <spirit:left>31</spirit:left>
+            <spirit:right>0</spirit:right>
+          </spirit:vector>
+          <spirit:wireType>
+            <spirit:defined>wire</spirit:defined>
+          </spirit:wireType>
+        </spirit:wire>
+        <spirit:description>Voted print_data[31:0] (Majority-3 per bit)</spirit:description>
+      </spirit:port>
+    </spirit:ports>
+
+    <spirit:modelParameters>
+      <spirit:modelParameter>
+        <spirit:name>INIT</spirit:name>
+        <spirit:description>LUT3 INIT value for Majority-3 function (default: 8'hE8)</spirit:description>
+        <spirit:dataType>std_logic_vector(7 downto 0)</spirit:dataType>
+        <spirit:usageType>nontyped</spirit:usageType>
+        <spirit:value>8'hE8</spirit:value>
+      </spirit:modelParameter>
+    </spirit:modelParameters>
+  </spirit:model>
+
+  <spirit:parameters>
+    <spirit:parameter>
+      <spirit:name>CHANNEL_COUNT</spirit:name>
+      <spirit:description>Number of TMR voting channels (fixed at 6)</spirit:description>
+      <spirit:dataType>integer</spirit:dataType>
+      <spirit:value>6</spirit:value>
+    </spirit:parameter>
+    <spirit:parameter>
+      <spirit:name>VOTER_TYPE</spirit:name>
+      <spirit:description>Voter implementation type</spirit:description>
+      <spirit:dataType>string</spirit:dataType>
+      <spirit:value>Majority-3 (LUT3 INIT=8'hE8)</spirit:value>
+    </spirit:parameter>
+  </spirit:parameters>
+
+  <spirit:description>
+    6-Channel Triple Modular Redundancy (TMR) Majority-3 Voter.
+    Implements bit-wise majority voting across three redundant core outputs.
+    Uses Xilinx LUT3 primitives (INIT=8'hE8) for the Majority-3 function.
+    Channels: ready (1b), boot_valid (1b), exit_valid (1b), exit_code (8b),
+              print_valid (1b), print_data (32b). Total: 44x LUT3, 0 FF.
+    Compatible with Xilinx 7-series, UltraScale, UltraScale+.
+  </spirit:description>
+
+  <spirit:fileGroups>
+    <spirit:fileGroup>
+      <spirit:name>verilog</spirit:name>
+      <spirit:file>
+        <spirit:name>../src/tmr_voter_6ch_xilinx.v</spirit:name>
+        <spirit:fileType>verilogSource</spirit:fileType>
+        <spirit:logicalName>tmr_voter_6ch_xilinx</spirit:logicalName>
+      </spirit:file>
+    </spirit:fileGroup>
+    <spirit:fileGroup>
+      <spirit:name>xdc</spirit:name>
+      <spirit:file>
+        <spirit:name>../constraints/tmr_voter_6ch_timing.xdc</spirit:name>
+        <spirit:fileType>xdc</spirit:fileType>
+      </spirit:file>
+    </spirit:fileGroup>
+  </spirit:fileGroups>
+</spirit:component>

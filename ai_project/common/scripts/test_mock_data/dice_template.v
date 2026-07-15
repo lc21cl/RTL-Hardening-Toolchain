@@ -1,0 +1,150 @@
+// ====================================================
+// DICE 寄存器加固模板
+// 
+// DICE (Dual Interlocked Storage Cell) 原理:
+//   4 节点交叉耦合存储 (n1, n2, p1, p2)
+//   单节点 SEU 时, 其他 3 个节点通过反馈恢复
+//   真正免疫需要版图级 STG (Spaced Transistor Groups)
+//   RTL 级需要 (* keep = "true" *) 防综合优化
+//
+// 面积: 2.5× (4 寄存器 vs 1 寄存器)
+// SEU 抑制: 单粒子免疫 (版图级), 单粒子容错 (RTL 级)
+//
+// 包含:
+//   1. 单比特 DICE 寄存器
+//   2. 多比特 DICE 寄存器 (参数化)
+//   3. DICE 错误检测
+//   4. DICE 扫描链 (测试用)
+// ====================================================
+
+`ifndef DICE_TEMPLATE_V
+`define DICE_TEMPLATE_V
+
+// ====================================================
+// 1. 单比特 DICE 寄存器
+// ====================================================
+(* keep = "true" *)
+module dice_ff (
+    input  wire clk,
+    input  wire rst_n,
+    input  wire d,
+    output wire q,
+    output wire error_flag
+);
+    // 4 节点交叉耦合存储
+    // n1, n2 = 正相存储节点
+    // p1, p2 = 反相存储节点
+    (* keep = "true" *) reg n1, n2, p1, p2;
+
+    // 写入: 所有节点同步更新
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            n1 <= 1'b0;
+            n2 <= 1'b0;
+            p1 <= 1'b0;
+            p2 <= 1'b0;
+        end else begin
+            n1 <= d;
+            n2 <= d;    // 同步更新, 确保四节点同时写入
+            p1 <= d;
+            p2 <= d;
+        end
+    end
+
+    // 输出: 四个节点投票
+    // 正常情况下: n1 == n2 == p1 == p2 == d
+    // SEU 下: 三个节点保留正确值, 投票恢复
+    assign q = (n1 & n2) | (p1 & p2);  // 等价于多数表决
+
+    // 错误检测: 任意节点不一致
+    assign error_flag = (n1 != n2) | (p1 != p2) | (n1 != p1);
+
+endmodule
+
+
+// ====================================================
+// 2. 多比特 DICE 寄存器 (参数化)
+// ====================================================
+(* keep = "true" *)
+module dice_register #(
+    parameter WIDTH = 8,
+    parameter CW    = 5     // 错误计数器位宽
+) (
+    input  wire             clk,
+    input  wire             rst_n,
+    input  wire [WIDTH-1:0] d,
+    output wire [WIDTH-1:0] q,
+    output wire             error_flag,
+    output reg  [CW-1:0]    error_count
+);
+
+    // 4 节点存储阵列
+    (* keep = "true" *) reg [WIDTH-1:0] n1, n2, p1, p2;
+
+    genvar i;
+    generate
+        for (i = 0; i < WIDTH; i = i + 1) begin : gen_dice_bit
+            // 每个 bit 独立做 DICE 存储
+            always_ff @(posedge clk or negedge rst_n) begin
+                if (!rst_n) begin
+                    n1[i] <= 1'b0;
+                    n2[i] <= 1'b0;
+                    p1[i] <= 1'b0;
+                    p2[i] <= 1'b0;
+                end else begin
+                    n1[i] <= d[i];
+                    n2[i] <= d[i];
+                    p1[i] <= d[i];
+                    p2[i] <= d[i];
+                end
+            end
+        end
+    endgenerate
+
+    // 多数表决输出 (每 bit 独立)
+    assign q = (n1 & n2) | (p1 & p2);
+
+    // 错误检测 (任意 bit 节点不一致)
+    assign error_flag = |((n1 ^ n2) | (p1 ^ p2) | (n1 ^ p1));
+
+    // 错误计数
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) error_count <= '0;
+        else if (error_flag && (&error_count != 1'b1))
+            error_count <= error_count + 1'b1;
+    end
+
+endmodule
+
+
+// ====================================================
+// 3. DICE + TMR 混合寄存器 (高可靠版本)
+// 对关键信号: DICE 存储 + TMR 表决
+// ====================================================
+(* keep = "true" *)
+module dice_tmr_register #(
+    parameter WIDTH = 8
+) (
+    input  wire             clk,
+    input  wire             rst_n,
+    input  wire [WIDTH-1:0] d,
+    output wire [WIDTH-1:0] q,
+    output wire             error_flag
+);
+    // 三份 DICE 寄存器
+    wire [WIDTH-1:0] q0, q1, q2;
+    wire err0, err1, err2;
+
+    dice_register #(.WIDTH(WIDTH)) u_dice0 (.clk(clk), .rst_n(rst_n), .d(d), .q(q0), .error_flag(err0));
+    dice_register #(.WIDTH(WIDTH)) u_dice1 (.clk(clk), .rst_n(rst_n), .d(d), .q(q1), .error_flag(err1));
+    dice_register #(.WIDTH(WIDTH)) u_dice2 (.clk(clk), .rst_n(rst_n), .d(d), .q(q2), .error_flag(err2));
+
+    // TMR 多数表决 (对 DICE 输出再做投票)
+    assign q = (q0 & q1) | (q1 & q2) | (q0 & q2);
+
+    // 错误: 任何 DICE 副本出错 或 表决不一致
+    assign error_flag = err0 | err1 | err2 | 
+                        |(q0 ^ q1) | (q1 ^ q2) | (q0 ^ q2);
+endmodule
+
+`endif

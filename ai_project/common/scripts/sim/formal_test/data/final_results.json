@@ -1,0 +1,22 @@
+{
+  "best_seed": 456,
+  "best_threshold": 0.56,
+  "seed_results": {},
+  "final_test": {
+    "f1": 0.774141,
+    "precision": 0.694665,
+    "recall": 0.874152,
+    "accuracy": 0.844202,
+    "auc_roc": 0.938657
+  },
+  "config": {
+    "in_channels": 10,
+    "hidden_channels": 128,
+    "architecture": "SAGE3",
+    "loss": "FocalLoss(alpha=0.75,gamma=2.0)",
+    "lr": 0.001,
+    "weight_decay": 0.0005,
+    "dropout": 0.3,
+    "samples": 3520
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "symmetric": {
+    "fp32_metrics": {
+      "precision": 0.924,
+      "recall": 0.7108,
+      "f1": 0.8035,
+      "accuracy": 0.9914,
+      "tp": 8635,
+      "fp": 709,
+      "fn": 3512,
+      "tn": 478926
+    },
+    "int8_metrics_same_th": {
+      "precision": 0.3158,
+      "recall": 0.2727,
+      "f1": 0.2927,
+      "accuracy": 0.9674,
+      "tp": 3313,
+      "fp": 7179,
+      "fn": 8834,
+      "tn": 472456
+    },
+    "int8_metrics_own_th": {
+      "precision": 0.4079,
+      "recall": 0.2652,
+      "f1": 0.3215,
+      "accuracy": 0.9723,
+      "tp": 3221,
+      "fp": 4676,
+      "fn": 8925,
+      "tn": 474960
+    },
+    "accuracy_loss": {
+      "f1_loss": 0.5107999999999999,
+      "acc_loss": 0.02399999999999991
+    },
+    "output_difference": {
+      "max_abs_diff": 252.06004333496094,
+      "avg_abs_diff": 16.14566421508789,
+      "std_abs_diff": 28.43075180053711
+    },
+    "acceptance": {
+      "f1_acceptable": false,
+      "acc_acceptable": false,
+      "diff_acceptable": false,
+      "all_pass": false
+    },
+    "memory_analysis": {
+      "fp32_bytes": 25540,
+      "int8_bytes": 6385,
+      "memory_saving": 75.0
+    }
+  },
+  "asymmetric": {
+    "fp32_metrics": {
+      "precision": 0.924,
+      "recall": 0.7108,
+      "f1": 0.8035,
+      "accuracy": 0.9914,
+      "tp": 8635,
+      "fp": 709,
+      "fn": 3512,
+      "tn": 478926
+    },
+    "int8_metrics_same_th": {
+      "precision": 0.3016,
+      "recall": 0.2749,
+      "f1": 0.2876,
+      "accuracy": 0.9664,
+      "tp": 3338,
+      "fp": 7730,
+      "fn": 8808,
+      "tn": 471906
+    },
+    "int8_metrics_own_th": {
+      "precision": 0.2589,
+      "recall": 0.4229,
+      "f1": 0.3212,
+      "accuracy": 0.9558,
+      "tp": 5137,
+      "fp": 14706,
+      "fn": 7010,
+      "tn": 464929
+    },
+    "accuracy_loss": {
+      "f1_loss": 0.5159,
+      "acc_loss": 0.02499999999999991
+    },
+    "output_difference": {
+      "max_abs_diff": 253.302490234375,
+      "avg_abs_diff": 16.51443862915039,
+      "std_abs_diff": 28.54815673828125
+    },
+    "acceptance": {
+      "f1_acceptable": false,
+      "acc_acceptable": false,
+      "diff_acceptable": false,
+      "all_pass": false
+    },
+    "memory_analysis": {
+      "fp32_bytes": 25540,
+      "int8_bytes": 6385,
+      "memory_saving": 75.0
+    }
+  },
+  "model": "SAGE2-Lite-64-Normalized",
+  "num_params": 6385,
+  "num_graphs": 416
+}

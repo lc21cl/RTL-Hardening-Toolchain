@@ -1,0 +1,46 @@
+{
+  "best_seed": 456,
+  "best_f1": 0.8869149299624188,
+  "config": {
+    "epochs": 200,
+    "hidden": 128,
+    "lr": 0.005,
+    "batch_size": 32,
+    "loss": "FocalLoss(alpha=0.977,gamma=2.0)",
+    "positive_ratio": 0.02337542548775673,
+    "samples": 4160,
+    "label_mode": "deterministic"
+  },
+  "seed_results": {
+    "seed_456": {
+      "best_val_f1": 0.6605838947706127,
+      "best_epoch": 121,
+      "test_threshold": 0.05,
+      "test_metrics": {
+        "f1": 0.8869149299624188,
+        "precision": 0.8117090021142909,
+        "recall": 0.977479738937101,
+        "accuracy": 0.9858657459372407,
+        "mse": 28707.619140625,
+        "mae": 82.42049407958984,
+        "r2": -1608518.125,
+        "corr": 0.12420045584440231
+      }
+    },
+    "seed_1111": {
+      "best_val_f1": 0.6620712758007576,
+      "best_epoch": 135,
+      "test_threshold": 0.05,
+      "test_metrics": {
+        "f1": 0.8811235246269028,
+        "precision": 0.8202948721911415,
+        "recall": 0.9516961916373807,
+        "accuracy": 0.9854387291981845,
+        "mse": 15433.939453125,
+        "mae": 63.76963424682617,
+        "r2": -864779.4375,
+        "corr": 0.15123966336250305
+      }
+    }
+  }
+}

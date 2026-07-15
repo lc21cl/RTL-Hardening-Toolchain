@@ -1,0 +1,87 @@
+{
+  "model": "SAGE2-Lite-64-Normalized",
+  "num_params": 6385,
+  "num_graphs": 416,
+  "fp32_metrics": {
+    "precision": 0.9516,
+    "recall": 0.6935,
+    "f1": 0.8023,
+    "accuracy": 0.9916,
+    "tp": 8424,
+    "fp": 428,
+    "fn": 3723,
+    "tn": 479207
+  },
+  "int8_metrics_same_th": {
+    "precision": 0.2322,
+    "recall": 0.156,
+    "f1": 0.1866,
+    "accuracy": 0.9664,
+    "tp": 1894,
+    "fp": 6266,
+    "fn": 10252,
+    "tn": 473370
+  },
+  "int8_metrics_own_th": {
+    "precision": 0.2062,
+    "recall": 0.4945,
+    "f1": 0.2911,
+    "accuracy": 0.9405,
+    "tp": 6007,
+    "fp": 23119,
+    "fn": 6140,
+    "tn": 456516
+  },
+  "accuracy_loss": {
+    "f1_loss": 0.6157,
+    "acc_loss": 0.0252
+  },
+  "output_difference": {
+    "max_abs_diff": 244.11648559570312,
+    "avg_abs_diff": 15.685956954956055,
+    "std_abs_diff": 27.209012985229492
+  },
+  "acceptance": {
+    "f1_acceptable": false,
+    "acc_acceptable": false,
+    "diff_acceptable": false,
+    "all_pass": false
+  },
+  "memory_analysis": {
+    "fp32_bytes": 25540,
+    "int8_bytes": 6385,
+    "memory_saving": 75.0
+  },
+  "activation_params": {
+    "h0": {
+      "min": 0.0,
+      "max": 1.0,
+      "scale": 0.007874015748031496,
+      "zero_point": 0
+    },
+    "h1": {
+      "min": 0.0,
+      "max": 1.6427135467529297,
+      "scale": 0.012934752336637241,
+      "zero_point": 0
+    },
+    "h2": {
+      "min": 0.0,
+      "max": 6.736072540283203,
+      "scale": 0.05303994126207247,
+      "zero_point": 0
+    },
+    "h3": {
+      "min": 0.0,
+      "max": 39.811744689941406,
+      "scale": 0.31347830464520793,
+      "zero_point": 0
+    },
+    "out": {
+      "min": -197.82460021972656,
+      "max": 26.591426849365234,
+      "scale": 1.5576740174781618,
+      "zero_point": 0
+    }
+  }
+}

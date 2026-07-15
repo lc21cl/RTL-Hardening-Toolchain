@@ -1,0 +1,9 @@
+{
+  "f1": 0.772323,
+  "precision": 0.723908,
+  "recall": 0.827678,
+  "accuracy": 0.837652,
+  "auc_roc": 0.930289,
+  "best_threshold": 0.59,
+  "method": "ensemble_3_best"
+}

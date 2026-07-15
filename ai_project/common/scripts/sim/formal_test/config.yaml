@@ -1,0 +1,46 @@
+# ============================================================================
+# Pipeline Configuration
+# ============================================================================
+# This file overrides default values from config.py.
+# All settings are optional — defaults are defined in config.py.
+
+# ── Paths ──
+paths:
+  data_dir: "data/"
+  models_dir: "data/models/"
+  logs_dir: "logs/"
+
+# ── Training ──
+train:
+  model: "SAGE3"
+  hidden_channels: 128
+  epochs: 200
+  patience: 50
+  batch_size: 32
+  lr: 0.001
+  device: "cpu"
+  loss: "FocalLoss"
+  focal_alpha: 0.977
+  focal_gamma: 2.0
+  use_pi_weighting: true
+  pi_weight: 10.0
+
+# ── Inference ──
+inference:
+  threshold: 0.05
+  device: "cpu"
+  benchmark_runs: 10
+
+# ── Graph Pipeline ──
+graph:
+  target_features: 12
+  generate_labels: true
+  label_mode: "prob_decay"
+
+# ── Logging ──
+logging:
+  level: "INFO"
+  file: "pipeline.log"
+  max_size_mb: 10
+  backup_count: 3
+  console_output: true

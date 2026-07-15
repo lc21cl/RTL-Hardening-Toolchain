@@ -1,0 +1,20 @@
+{
+  "test_metrics": {
+    "f1": 0.608839,
+    "precision": 0.635435,
+    "recall": 0.58438,
+    "accuracy": 0.689098,
+    "auc_roc": 0.754937
+  },
+  "train_metrics": {
+    "f1": 0.599691,
+    "precision": 0.659714,
+    "recall": 0.549679,
+    "accuracy": 0.694809,
+    "auc_roc": 0.762119
+  },
+  "epochs_trained": 300,
+  "best_val_loss": 0.5507502290937636,
+  "val_f1_best": 0.647966,
+  "model_params": 5761
+}

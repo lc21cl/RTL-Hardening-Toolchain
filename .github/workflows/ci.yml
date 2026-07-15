@@ -1,0 +1,256 @@
+# CI/CD Pipeline for RTL Auto-Fix Toolchain
+#
+# Trigger on push/PR to main/develop, or daily schedule.
+# Runs: linting, regression tests, integration pipeline, inference smoke test.
+
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'common/scripts/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * *'  # Daily 06:00 UTC
+  workflow_dispatch:       # Manual trigger
+
+env:
+  PYTHON_VERSION: '3.10'
+  WORKING_DIR: common/scripts/sim/formal_test
+
+jobs:
+  # ── Job 1: Lint & Format Check ──
+  lint:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install linting dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 black isort mypy
+
+      - name: Check Python formatting (Black)
+        run: |
+          black --check --diff --line-length=88 \
+            --exclude='\.venv|gpu_training_package' \
+            --target-version=py310 .
+
+      - name: Lint with flake8
+        run: |
+          flake8 . \
+            --max-line-length=88 \
+            --extend-ignore=E203,W503 \
+            --exclude=.venv,gpu_training_package,__pycache__ \
+            --statistics
+
+      - name: Check import ordering (isort)
+        run: |
+          isort --check-only --diff --profile=black \
+            --skip-glob='.venv/**' \
+            --skip-glob='gpu_training_package/**' .
+
+  # ── Job 2: Regression Tests (all 8 strategies + negative cases) ──
+  regression:
+    name: Regression Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torch-geometric numpy networkx pyyaml psutil
+
+      - name: Run regression test suite (all strategies)
+        run: |
+          python test_regression_suite.py
+
+      - name: Run regression test (quick mode)
+        run: |
+          python test_regression_suite.py --quick
+
+  # ── Job 3: Integration Test Pipeline ──
+  integration:
+    name: Integration Pipeline Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Yosys
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y yosys
+          yosys --version
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torch-geometric numpy networkx pyyaml psutil
+
+      - name: Run integration pipeline (quick mode)
+        run: |
+          python test_integration_pipeline.py --quick
+
+      - name: Run integration pipeline (full mode)
+        run: |
+          python test_integration_pipeline.py
+
+  # ── Job 4: MockLLM & API Smoke Test ──
+  mock-llm:
+    name: MockLLM & API Backend Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch numpy networkx pyyaml
+
+      - name: Verify MockLLM all 8 templates
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, '.')
+          from rag_integration import MockLLM
+          templates = {
+              'tmr':       MockLLM._tmr_rtl,
+              'ecc':       MockLLM._ecc_rtl,
+              'dice':      MockLLM._dice_rtl,
+              'parity':    MockLLM._parity_rtl,
+              'tmr_ecc':   MockLLM._tmr_ecc_rtl,
+              'cnt_comp':  MockLLM._cnt_comp_rtl,
+              'watchdog':  MockLLM._watchdog_rtl,
+              'one_hot_fsm': MockLLM._one_hot_fsm_rtl,
+          }
+          for name, func in templates.items():
+              rtl = func('test', 8)
+              assert 'module' in rtl and 'endmodule' in rtl, f'{name}: invalid RTL'
+              print(f'  [OK] {name:12s} ({len(rtl.splitlines()):2d} lines, {len(rtl):4d} chars)')
+          print('All 8 templates verified!')
+          "
+
+      - name: Verify OpenAIBackend mock fallback
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, '.')
+          from rag_integration import OpenAIBackend
+          strategies = ['tmr', 'ecc', 'dice', 'parity', 'tmr_ecc',
+                        'cnt_comp', 'watchdog', 'one_hot_fsm']
+          backend = OpenAIBackend()
+          for s in strategies:
+              rtl = backend.generate(f'Apply {s} hardening')
+              assert rtl and 'endmodule' in rtl, f'{s}: mock fallback failed'
+              print(f'  [OK] OpenAIBackend(\"{s}\"): {len(rtl.splitlines())} lines')
+          print('All OpenAIBackend mock fallbacks verified!')
+          "
+
+  # ── Job 5: Module Import & Config Validation ──
+  validate:
+    name: Module & Config Validation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.WORKING_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torch-geometric numpy networkx pyyaml
+
+      - name: Verify module imports
+        run: |
+          python -c "
+            import sys
+            modules = [
+              'config', 'logger', 'blif_to_pyg', 'aig_parser',
+              'graph_pipeline', 'gnn_inference', 'graphsage_model',
+              'rag_integration', 'ast_repairer', 'rtl_parser',
+              'blif_to_aiger',
+            ]
+            for mod in modules:
+              try:
+                __import__(mod)
+                print(f'  [OK] {mod}')
+              except ImportError as e:
+                print(f'  [FAIL] {mod}: {e}')
+                sys.exit(1)
+            print('All imports successful!')
+          "
+
+      - name: Verify config loading
+        run: |
+          python -c "
+            from config import config
+            config.print()
+            assert config.get('train.epochs') == 200
+            assert config.get('graph.target_features') == 12
+            print('Config loading OK')
+          "
+
+      - name: Verify documentation files
+        run: |
+          for f in ../../../docs/WEEKLY_DEV_PLAN.md \
+                    ../../../docs/HARDENING_OPTIMIZATION_ROADMAP.md; do
+            if [ -f "\$f" ]; then
+              count=\$(wc -l < "\$f")
+              echo "  [OK] \$(basename \$f): \$count lines"
+            else
+              echo "  [FAIL] \$f missing"
+              exit 1
+            fi
+          done
+          echo "All documentation files verified!"

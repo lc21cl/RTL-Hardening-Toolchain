@@ -1,0 +1,35 @@
+[
+  {
+    "config": "SAGE2-Lite-32",
+    "parameters": 2177,
+    "train_samples": 1664,
+    "epochs": 30,
+    "duration": 314.7,
+    "val_f1": 0.9695,
+    "test_f1": 0.9615,
+    "test_threshold": 0.45,
+    "model_path": "d:\\learning\\AI_RESEARCH\\ai_project\\common\\scripts\\sim\\formal_test\\data\\models\\SAGE2-Lite-32.pth"
+  },
+  {
+    "config": "SAGE3-Lite-32",
+    "parameters": 4257,
+    "train_samples": 1664,
+    "epochs": 30,
+    "duration": 513.7,
+    "val_f1": 0.9808,
+    "test_f1": 0.977,
+    "test_threshold": 0.45,
+    "model_path": "d:\\learning\\AI_RESEARCH\\ai_project\\common\\scripts\\sim\\formal_test\\data\\models\\SAGE3-Lite-32.pth"
+  },
+  {
+    "config": "SAGE2-Lite-64",
+    "parameters": 6385,
+    "train_samples": 1664,
+    "epochs": 30,
+    "duration": 1060.1,
+    "val_f1": 0.9872,
+    "test_f1": 0.9853,
+    "test_threshold": 0.45,
+    "model_path": "d:\\learning\\AI_RESEARCH\\ai_project\\common\\scripts\\sim\\formal_test\\data\\models\\SAGE2-Lite-64.pth"
+  }
+]

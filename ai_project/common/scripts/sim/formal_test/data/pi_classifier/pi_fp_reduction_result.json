@@ -1,0 +1,28 @@
+{
+  "pi_nodes": 15184,
+  "base_pi": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0
+  },
+  "cascade_pi": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0
+  },
+  "fp_reduction": {
+    "original": 0,
+    "reduced": 0,
+    "reduction_ratio": 1.0
+  },
+  "overall": {
+    "base_f1": 0.9469083279911418,
+    "cascade_f1": 0.9469083279911418
+  }
+}

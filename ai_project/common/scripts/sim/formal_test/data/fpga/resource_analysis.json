@@ -1,0 +1,45 @@
+{
+  "model_spec": {
+    "conv1": {
+      "input": 10,
+      "output": 128,
+      "type": "SAGEConv"
+    },
+    "conv2": {
+      "input": 128,
+      "output": 128,
+      "type": "SAGEConv"
+    },
+    "conv3": {
+      "input": 128,
+      "output": 64,
+      "type": "SAGEConv"
+    },
+    "mlp1": {
+      "input": 64,
+      "output": 32,
+      "type": "Linear"
+    },
+    "mlp2": {
+      "input": 32,
+      "output": 1,
+      "type": "Linear"
+    }
+  },
+  "total_macs": 53792,
+  "total_params": 54145,
+  "resource_estimate": {
+    "BRAM_18K": 11.750217013888891,
+    "LUT": 106544.0,
+    "FF": 706.0,
+    "DSP48E": 353.0
+  },
+  "target_device": "xc7z020clg484-1",
+  "device_limits": {
+    "BRAM_18K": 36,
+    "LUT": 53200,
+    "FF": 106400,
+    "DSP48E": 220
+  },
+  "throughput_mbps": 283286.11898017
+}

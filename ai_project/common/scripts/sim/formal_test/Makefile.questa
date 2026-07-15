@@ -1,0 +1,143 @@
+#------------------------------------------------------------------------------
+# Makefile.questa — TMR Voter UVM 测试台 Questa 仿真 Makefile
+#
+# 用法:
+#   make -f Makefile.questa help       - 显示帮助
+#   make -f Makefile.questa compile    - 编译所有源文件
+#   make -f Makefile.questa single_test TEST_NAME=<test_name>  - 运行单个测试
+#   make -f Makefile.questa regression - 运行完整回归测试
+#   make -f Makefile.questa clean      - 清除生成文件
+#
+# 环境要求:
+#   - QuestaSim (vsim/vlog) 已加入 PATH
+#   - 运行于 Windows (PowerShell) 或 Linux
+#------------------------------------------------------------------------------
+
+# ========================================================================
+# 工具配置
+# ========================================================================
+VSIM     := vsim
+VLOG     := vlog
+VLIB     := vlib
+VMAP     := vmap
+
+# ========================================================================
+# 目录和文件
+# ========================================================================
+WORK_DIR := $(CURDIR)
+WORK_LIB := work
+COMP_LOG := comp.log
+
+# UVM 源文件列表 (按依赖顺序排列)
+# 注意: tmr_voter_pkg.sv 内部已 `include ral_model/driver/monitor/scoreboard/env/test
+#        这些文件无需在此单独列出
+SV_SRCS := \
+    $(WORK_DIR)/cpu_core_tmr_synth.v \
+    $(WORK_DIR)/cpu_core_tmr_core_stub.sv \
+    $(WORK_DIR)/../../test_mock_data/cpu_core_tmr_uvm.sv \
+    $(WORK_DIR)/tmr_voter_if.sv \
+    $(WORK_DIR)/tmr_voter_pkg.sv \
+    $(WORK_DIR)/tb_tmr_voter_uvm.sv
+
+# 测试列表
+TEST_NAMES := reset_test single_fault_test double_fault_test random_stimulus_test boundary_test glitch_injection_test regress_test
+
+# ========================================================================
+# 默认目标
+# ========================================================================
+all: compile regression
+
+help:
+	@echo "TMR Voter UVM Questa 仿真 Makefile"
+	@echo ""
+	@echo "目标:"
+	@echo "  make -f Makefile.questa compile      - 编译所有源文件"
+	@echo "  make -f Makefile.questa regression   - 运行完整回归测试"
+	@echo "  make -f Makefile.questa single_test TEST_NAME=<name> - 运行单个测试"
+	@echo "  make -f Makefile.questa clean        - 清除生成文件"
+	@echo "  make -f Makefile.questa help         - 显示此帮助"
+	@echo ""
+	@echo "可用测试:"
+	@echo "  reset_test             - Reset Test"
+	@echo "  single_fault_test      - Single Fault Injection Test"
+	@echo "  double_fault_test      - Double Fault Injection Test"
+	@echo "  random_stimulus_test   - Random Stimulus Test (1000 items)"
+	@echo "  boundary_test          - Boundary Condition Test"
+	@echo "  regress_test           - Full Regression Test"
+	@echo "  glitch_injection_test  - Glitch Injection Test (Pipeline Verification)"
+	@echo ""
+	@echo "示例:"
+	@echo "  make -f Makefile.questa compile"
+	@echo "  make -f Makefile.questa single_test TEST_NAME=reset_test"
+	@echo "  make -f Makefile.questa regression"
+
+# ========================================================================
+# 编译
+# ========================================================================
+compile: $(WORK_LIB)/_info
+	$(VLOG) -sv -work $(WORK_LIB) -l $(COMP_LOG) +incdir+$(WORK_DIR) $(SV_SRCS)
+
+$(WORK_LIB)/_info:
+	$(VLIB) $(WORK_LIB)
+	$(VMAP) $(WORK_LIB) $(WORK_LIB)
+
+# ========================================================================
+# 单个测试
+# ========================================================================
+single_test: $(WORK_LIB)/_info
+	@if [ -z "$(TEST_NAME)" ]; then \
+		echo "错误: 请指定 TEST_NAME, 例如: make -f Makefile.questa single_test TEST_NAME=reset_test"; \
+		exit 1; \
+	fi
+	$(VSIM) -c -l $(TEST_NAME).log -do "run -all; quit" \
+		-sv_seed random \
+		+UVM_TESTNAME=$(TEST_NAME) \
+		-L $(WORK_LIB) \
+		$(WORK_LIB).tb_tmr_voter_uvm
+
+# ========================================================================
+# 回归测试
+# ========================================================================
+regression: $(WORK_LIB)/_info
+	@echo "=============================================="
+	@echo "  TMR Voter UVM 回归测试"
+	@echo "=============================================="
+	@total=0; passed=0; failed=0; \
+	for test in $(TEST_NAMES); do \
+		total=$$((total + 1)); \
+		echo "  [$$total/$(words $(TEST_NAMES))] Running $$test..."; \
+		if $(VSIM) -c -l $${test}.log -do "run -all; quit" \
+			-sv_seed random \
+			+UVM_TESTNAME=$$test \
+			-L $(WORK_LIB) \
+			$(WORK_LIB).tb_tmr_voter_uvm > /dev/null 2>&1; then \
+			echo "  -> PASSED"; \
+			passed=$$((passed + 1)); \
+		else \
+			echo "  -> FAILED"; \
+			failed=$$((failed + 1)); \
+		fi; \
+	done; \
+	echo ""; \
+	echo "=============================================="; \
+	echo "  回归测试总结"; \
+	echo "=============================================="; \
+	echo "  总测试数 : $$total"; \
+	echo "  PASSED   : $$passed"; \
+	echo "  FAILED   : $$failed"; \
+	if [ $$failed -eq 0 ]; then \
+		echo "  结果: 全部通过!"; \
+	else \
+		echo "  结果: $$failed 个测试失败!"; \
+	fi; \
+	echo "=============================================="
+
+# ========================================================================
+# 清除
+# ========================================================================
+clean:
+	rm -rf $(WORK_LIB)
+	rm -f transcript
+	rm -f *.log *.vcd *.wdb vsim.wlf
+	rm -f modelsim.ini
+	@echo "清除完成"

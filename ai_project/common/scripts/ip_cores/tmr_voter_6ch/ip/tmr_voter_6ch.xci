@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<spirit:component xmlns:spirit="http://www.spiritconsortium.org/XMLSchema/SPIRIT/1685-2009"
+                  xmlns:xilinx="http://www.xilinx.com"
+                  spirit:vendor="user.org"
+                  spirit:library="tmr"
+                  spirit:name="tmr_voter_6ch"
+                  spirit:version="1.0">
+  <xilinx:coreVersion>1.0</xilinx:coreVersion>
+  <xilinx:coreDescription>6-Channel TMR Majority-3 Voter (LUT3-based)</xilinx:coreDescription>
+  <xilinx:supportedFamilies>
+    <xilinx:family>xcv7</xilinx:family>
+    <xilinx:family>xcu</xilinx:family>
+    <xilinx:family>xcuplus</xilinx:family>
+  </xilinx:supportedFamilies>
+  <xilinx:taxonomy>
+    <xilinx:taxonomyItem>Arithmetic</xilinx:taxonomyItem>
+  </xilinx:taxonomy>
+  <xilinx:generateCore>
+    <xilinx:coreGenType>custom</xilinx:coreGenType>
+    <xilinx:coreName>tmr_voter_6ch</xilinx:coreName>
+    <xilinx:coreVersion>1.0</xilinx:coreVersion>
+  </xilinx:generateCore>
+  <xilinx:files>
+    <xilinx:file xilinx:fileType="verilog" xilinx:library="tmr_voter_6ch_xilinx">../src/tmr_voter_6ch_xilinx.v</xilinx:file>
+    <xilinx:file xilinx:fileType="xdc">../constraints/tmr_voter_6ch_timing.xdc</xilinx:file>
+  </xilinx:files>
+  <xilinx:ports>
+    <xilinx:port xilinx:name="clk" xilinx:direction="in" xilinx:size="1"/>
+    <xilinx:port xilinx:name="rst_n" xilinx:direction="in" xilinx:size="1"/>
+    <xilinx:port xilinx:name="core1_ready" xilinx:direction="in" xilinx:size="1"/>
+    <xilinx:port xilinx:name="core2_ready" xilinx:direction="in" xilinx:size="1"/>
+    <xilinx:port xilinx:name="core3_ready" xilinx:direction="in" xilinx:size="1"/>
+    <xilinx:port xilinx:name="voted_ready" xilinx:direction="out" xilinx:size="1"/>
+    <xilinx:port xilinx:name="core1_boot_valid" xilinx:direction="in" xilinx:size="1"/>
+    <xilinx:port xilinx:name="core2_boot_valid" xilinx:direction="in" xilinx:size="1"/>
+    <xilinx:port xilinx:name="core3_boot_valid" xilinx:direction="in" xilinx:size="1"/>
+    <xilinx:port xilinx:name="voted_boot_valid" xilinx:direction="out" xilinx:size="1"/>
+    <xilinx:port xilinx:name="core1_exit_valid" xilinx:direction="in" xilinx:size="1"/>
+    <xilinx:port xilinx:name="core2_exit_valid" xilinx:direction="in" xilinx:size="1"/>
+    <xilinx:port xilinx:name="core3_exit_valid" xilinx:direction="in" xilinx:size="1"/>
+    <xilinx:port xilinx:name="voted_exit_valid" xilinx:direction="out" xilinx:size="1"/>
+    <xilinx:port xilinx:name="core1_exit_code" xilinx:direction="in" xilinx:size="8"/>
+    <xilinx:port xilinx:name="core2_exit_code" xilinx:direction="in" xilinx:size="8"/>
+    <xilinx:port xilinx:name="core3_exit_code" xilinx:direction="in" xilinx:size="8"/>
+    <xilinx:port xilinx:name="voted_exit_code" xilinx:direction="out" xilinx:size="8"/>
+    <xilinx:port xilinx:name="core1_print_valid" xilinx:direction="in" xilinx:size="1"/>
+    <xilinx:port xilinx:name="core2_print_valid" xilinx:direction="in" xilinx:size="1"/>
+    <xilinx:port xilinx:name="core3_print_valid" xilinx:direction="in" xilinx:size="1"/>
+    <xilinx:port xilinx:name="voted_print_valid" xilinx:direction="out" xilinx:size="1"/>
+    <xilinx:port xilinx:name="core1_print_data" xilinx:direction="in" xilinx:size="32"/>
+    <xilinx:port xilinx:name="core2_print_data" xilinx:direction="in" xilinx:size="32"/>
+    <xilinx:port xilinx:name="core3_print_data" xilinx:direction="in" xilinx:size="32"/>
+    <xilinx:port xilinx:name="voted_print_data" xilinx:direction="out" xilinx:size="32"/>
+  </xilinx:ports>
+  <xilinx:parameters>
+    <xilinx:parameter xilinx:name="INIT" xilinx:value="8'hE8" xilinx:dataType="std_logic_vector(7 downto 0)" xilinx:description="LUT3 INIT value for Majority-3 function"/>
+  </xilinx:parameters>
+</spirit:component>

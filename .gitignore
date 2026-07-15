@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+*.whl
+
+# Environment
+.env
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ML Models (large binaries)
+*.pt
+*.pth
+*.onnx
+*.h5
+data/models/
+
+# Training data
+gpu_training_package/
+
+# Generated files
+*.blif
+*.aig
+*.ys
+output/
+temp/
+*.log
+
+# Debug
+__check_*.py
+__verify_*.py
+__test_*.py

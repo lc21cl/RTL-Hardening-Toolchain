@@ -1,0 +1,46 @@
+{
+  "design": "test_mock_data/mixed_design.v",
+  "output": "test_mock_data/mixed_design_hardened.v",
+  "optimization_goal": "area",
+  "total_signals": 6,
+  "strategies": [
+    "cnt_comp",
+    "parity",
+    "tmr",
+    "tmr_state"
+  ],
+  "signal_map": {
+    "cycle_count": "cnt_comp",
+    "config_reg": "parity",
+    "mode_select": "parity",
+    "acc_reg": "tmr",
+    "tmp_reg": "tmr",
+    "state": "tmr_state"
+  },
+  "guides": [
+    {
+      "signal": "cycle_count",
+      "strategy": "cnt_comp",
+      "width": 16,
+      "action": "\u66ff\u6362 reg [15:0] cycle_count \u2192 \u5b9e\u4f8b\u5316 cnt_comp_up"
+    },
+    {
+      "signal": "config_reg",
+      "strategy": "parity",
+      "width": 8,
+      "action": "\u6dfb\u52a0 parity_config_reg \u5947\u5076\u4f4d + config_reg_error_flag"
+    },
+    {
+      "signal": "mode_select",
+      "strategy": "parity",
+      "width": 1,
+      "action": "\u6dfb\u52a0 parity_mode_select \u5947\u5076\u4f4d + mode_select_error_flag"
+    },
+    {
+      "signal": "state",
+      "strategy": "tmr_state",
+      "width": 2,
+      "action": "\u66ff\u6362 reg [1:0] state \u2192 3 \u526f\u672c + \u591a\u6570\u8868\u51b3\u5668 + fsm_error"
+    }
+  ]
+}

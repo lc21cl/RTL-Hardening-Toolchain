@@ -1,0 +1,24 @@
+# 仿真生成文件
+*.vvp
+*.vcd
+*.lxt
+*.lxt2
+*.fst
+*.fsdb
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# 临时文件
+*.tmp
+*.bak

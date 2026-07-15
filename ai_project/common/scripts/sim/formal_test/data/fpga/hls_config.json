@@ -1,0 +1,16 @@
+{
+  "target": "xc7z020clg484-1",
+  "clock_period": 10,
+  "part": "xc7z020clg484-1",
+  "top_function": "sage3_inference",
+  "interface": {
+    "features": "ap_fixed<16,8>",
+    "edge_index": "ap_uint<16>",
+    "output": "ap_fixed<16,8>"
+  },
+  "directives": {
+    "unroll": true,
+    "pipeline": true,
+    "array_partition": true
+  }
+}

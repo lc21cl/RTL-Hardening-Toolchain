@@ -1,0 +1,38 @@
+[
+  {
+    "name": "SAGE2-Lite-64 (Optimized)",
+    "parameters": 6385,
+    "hidden_channels": 64,
+    "avg_time_ms": 3.838,
+    "avg_per_node_ms": 3.2466,
+    "min_time_ms": 0.567,
+    "max_time_ms": 72.062,
+    "std_time_ms": 6.547,
+    "total_nodes": 1475352,
+    "num_graphs": 1248
+  },
+  {
+    "name": "SAGE2-Lite-32 (Lightweight)",
+    "parameters": 2177,
+    "hidden_channels": 32,
+    "avg_time_ms": 2.996,
+    "avg_per_node_ms": 2.5342,
+    "min_time_ms": 0.55,
+    "max_time_ms": 65.885,
+    "std_time_ms": 6.168,
+    "total_nodes": 1475352,
+    "num_graphs": 1248
+  },
+  {
+    "name": "SAGE3-Lite-32 (3-layer)",
+    "parameters": 4257,
+    "hidden_channels": 32,
+    "avg_time_ms": 4.144,
+    "avg_per_node_ms": 3.5058,
+    "min_time_ms": 0.79,
+    "max_time_ms": 57.392,
+    "std_time_ms": 7.123,
+    "total_nodes": 1475352,
+    "num_graphs": 1248
+  }
+]

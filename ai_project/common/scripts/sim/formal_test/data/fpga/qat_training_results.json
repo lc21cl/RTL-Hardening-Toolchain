@@ -1,0 +1,24 @@
+{
+  "model": "SAGE2-Lite-64-QAT",
+  "parameters": 6385,
+  "epochs": 50,
+  "duration": 897.5,
+  "val_f1": 0.813,
+  "test_f1": 0.8086,
+  "test_threshold": 0.35,
+  "model_path": "D:\\learning\\AI_RESEARCH\\ai_project\\common\\scripts\\sim\\formal_test\\data\\models\\SAGE2-Lite-64-QAT.pth",
+  "activation_params": {
+    "h1": {
+      "scale": 0.009533639967910887,
+      "zero_point": 0
+    },
+    "h2": {
+      "scale": 0.026565959134439782,
+      "zero_point": 0
+    },
+    "h3": {
+      "scale": 0.05595691185297928,
+      "zero_point": 0
+    }
+  }
+}

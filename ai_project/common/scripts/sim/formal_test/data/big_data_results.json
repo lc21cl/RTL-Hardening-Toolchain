@@ -1,0 +1,24 @@
+{
+  "test": {
+    "f1": 0.77029,
+    "precision": 0.71053,
+    "recall": 0.841026,
+    "accuracy": 0.833122,
+    "auc_roc": 0.928299
+  },
+  "train": {
+    "f1": 0.778101,
+    "precision": 0.732462,
+    "recall": 0.829806,
+    "accuracy": 0.846097,
+    "auc_roc": 0.935331
+  },
+  "config": {
+    "hidden_channels": 128,
+    "pos_weight": 2.075238253660356,
+    "best_threshold": 0.57,
+    "epochs": 290,
+    "params": 19681
+  },
+  "val_f1_best": 0.772646
+}

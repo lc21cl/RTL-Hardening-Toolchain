@@ -1,0 +1,71 @@
+{
+  "model_name": "VulnerabilityPredictor_SAGE3",
+  "input_dimensions": {
+    "node_features": {
+      "shape": [
+        "num_nodes",
+        10
+      ],
+      "dtype": "float32"
+    },
+    "edge_index": {
+      "shape": [
+        2,
+        "num_edges"
+      ],
+      "dtype": "int64"
+    }
+  },
+  "output_dimensions": {
+    "vulnerability_scores": {
+      "shape": [
+        "num_nodes",
+        1
+      ],
+      "dtype": "float32"
+    }
+  },
+  "feature_names": [
+    "node_type_pi",
+    "node_type_po",
+    "node_type_and",
+    "node_type_dff",
+    "degree_in",
+    "degree_out",
+    "depth",
+    "is_const",
+    "path_length_entropy",
+    "betweenness_centrality"
+  ],
+  "scaling": {
+    "degree_in": {
+      "normalization": "divide_by_max",
+      "max_value": "per_graph"
+    },
+    "degree_out": {
+      "normalization": "divide_by_max",
+      "max_value": "per_graph"
+    },
+    "depth": {
+      "normalization": "divide_by_max",
+      "max_value": "per_graph"
+    },
+    "path_length_entropy": {
+      "normalization": "divide_by_max",
+      "max_value": "per_graph"
+    },
+    "betweenness_centrality": {
+      "normalization": "divide_by_max",
+      "max_value": "per_graph"
+    }
+  },
+  "onnx_models": {
+    "individual": [
+      "vulnerability_seed42.onnx",
+      "vulnerability_seed456.onnx",
+      "vulnerability_seed1111.onnx"
+    ],
+    "ensemble": "vulnerability_ensemble.onnx"
+  },
+  "opsets": 15
+}

@@ -1,0 +1,47 @@
+{
+  "hidden128_weight": {
+    "f1": 0.669132,
+    "precision": 0.582742,
+    "recall": 0.785596,
+    "accuracy": 0.741533,
+    "auc_roc": 0.826842,
+    "best_threshold": 0.26,
+    "params": 19681
+  },
+  "big_data_model": {
+    "f1": 0.77029,
+    "precision": 0.71053,
+    "recall": 0.841026,
+    "accuracy": 0.833122,
+    "auc_roc": 0.928299,
+    "best_threshold": 0.57,
+    "params": 19681
+  },
+  "sage3_64": {
+    "f1": 0.772165,
+    "precision": 0.729255,
+    "recall": 0.820441,
+    "accuracy": 0.838927,
+    "auc_roc": 0.929877,
+    "best_threshold": 0.59,
+    "params": 14017
+  },
+  "sage3_128": {
+    "f1": 0.773662,
+    "precision": 0.729705,
+    "recall": 0.823255,
+    "accuracy": 0.839748,
+    "auc_roc": 0.930916,
+    "best_threshold": 0.6,
+    "params": 52577
+  },
+  "gat_64": {
+    "f1": 0.764604,
+    "precision": 0.721888,
+    "recall": 0.812694,
+    "accuracy": 0.833524,
+    "auc_roc": 0.925343,
+    "best_threshold": 0.59,
+    "params": 40257
+  }
+}

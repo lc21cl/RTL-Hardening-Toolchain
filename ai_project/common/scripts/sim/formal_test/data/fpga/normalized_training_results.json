@@ -1,0 +1,10 @@
+{
+  "model": "SAGE2-Lite-64-Normalized",
+  "parameters": 6385,
+  "epochs": 50,
+  "duration": 818.4,
+  "val_f1": 0.9906,
+  "test_f1": 0.9887,
+  "test_threshold": 0.45,
+  "model_path": "D:\\learning\\AI_RESEARCH\\ai_project\\common\\scripts\\sim\\formal_test\\data\\models\\SAGE2-Lite-64-Normalized.pth"
+}
