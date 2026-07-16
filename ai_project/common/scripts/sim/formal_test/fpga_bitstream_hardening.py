@@ -148,9 +148,9 @@ class FPGABitstreamHardener:
             with open(self.bitstream_file, 'rb') as f:
                 original_data = f.read()
 
-            tmr_marker = b'\xFF\xFF\xTMR\x00'
-            ecc_marker = b'\xFF\xFF\xECC\x00'
-            scrub_marker = b'\xFF\xFF\xSCRUB\x00'
+            tmr_marker = b'\xFF\xFFTMR\x00'
+            ecc_marker = b'\xFF\xFFECC\x00'
+            scrub_marker = b'\xFF\xFFSCRUB\x00'
 
             hardened_data = original_data
             if self.configuration['tmr_blocks']:
@@ -195,9 +195,9 @@ class FPGABitstreamHardener:
                 original_data = f.read()
 
             region_size = 0x8000
-            pr_data = b'\xAA\xAA\xPR_START\x00'
+            pr_data = b'\xAA\xAAPR_START\x00'
             pr_data += original_data[:region_size]
-            pr_data += b'\xAA\xAA\xPR_END\x00'
+            pr_data += b'\xAA\xAAPR_END\x00'
 
             os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
             with open(output_path, 'wb') as f:

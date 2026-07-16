@@ -143,23 +143,50 @@ class HardeningPipeline:
         
         # 发现所有 reg 声明
         reg_pattern = re.finditer(
-            r'reg\s*(?:\[(\d+):(\d+)\])?\s*(\w+)\s*;',
-            content
+            r'(?:input|output|inout)?\s*reg\s*(?:\[(\d+):(\d+)\])?\s*(\w+)\s*(?:,|;|\)|$)',
+            content,
+            re.IGNORECASE
         )
+        
+        declared_regs = set()
         
         for m in reg_pattern:
             name = m.group(3)
+            if name in declared_regs:
+                continue
+            declared_regs.add(name)
+            
             msb = int(m.group(1)) if m.group(1) else 0
             lsb = int(m.group(2)) if m.group(2) else 0
             width = msb - lsb + 1 if m.group(1) else 1
             
-            # 类型分类
             signal_type = self._classify_signal(name, content)
             
             self.module_info[name] = {
                 'name': name,
                 'width': width,
                 'type': signal_type,
+            }
+        
+        # 额外检测 wire 声明（用于数据路径分析）
+        wire_pattern = re.finditer(
+            r'(?:input|output|inout)?\s*wire\s*(?:\[(\d+):(\d+)\])?\s*(\w+)\s*(?:,|;)',
+            content,
+            re.IGNORECASE
+        )
+        for m in wire_pattern:
+            name = m.group(3)
+            if name in declared_regs:
+                continue
+            
+            msb = int(m.group(1)) if m.group(1) else 0
+            lsb = int(m.group(2)) if m.group(2) else 0
+            width = msb - lsb + 1 if m.group(1) else 1
+            
+            self.module_info[name] = {
+                'name': name,
+                'width': width,
+                'type': 'data_path',
             }
         
         print(f"\n[ANALYZE] 发现 {len(self.module_info)} 个信号:")
@@ -169,6 +196,10 @@ class HardeningPipeline:
             type_counts[t] = type_counts.get(t, 0) + 1
         for t, c in sorted(type_counts.items()):
             print(f"  - {t:15s}: {c} 个")
+        
+        self.reg_count = len(self.module_info)
+        self.critical_count = sum(1 for info in self.module_info.values() 
+                                   if info['type'] in ('fsm', 'control', 'counter'))
         
         return self.module_info
     
