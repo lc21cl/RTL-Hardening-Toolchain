@@ -2,7 +2,8 @@
 """
 hardening_pipeline.py — 统一加固管线
 
-将 TMR, cnt_comp, DICE, parity, TMR_state 集成到一条端到端管线。
+将 TMR, cnt_comp, DICE, parity, TMR_state, 增量加固, 可靠性分析,
+迁移学习, 多模型融合, 形式化验证, 策略自动选择, FPGA比特流加固集成到一条端到端管线。
 
 用法:
     from hardening_pipeline import HardeningPipeline
@@ -13,6 +14,12 @@ hardening_pipeline.py — 统一加固管线
     pipeline.route_strategies()  # 步骤 3: 策略选择
     pipeline.transform()         # 步骤 4: AST 变换
     pipeline.output("design_hardened.v")  # 步骤 5: 输出
+    
+    # 新功能
+    pipeline.incremental_update(modified_rtl)  # 增量加固
+    pipeline.generate_reliability_report()     # 可靠性报告
+    pipeline.formal_verify()                   # 形式化验证
+    pipeline.fpga_bitstream_harden()           # FPGA比特流加固
 """
 
 import os
@@ -20,6 +27,39 @@ import json
 import tempfile
 import subprocess
 from typing import Dict, List, Optional
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_SIM_DIR = os.path.join(_SCRIPT_DIR, 'sim', 'formal_test')
+
+try:
+    from sim.formal_test.incremental_hardening import IncrementalHardener
+    _INCREMENTAL_AVAILABLE = True
+except ImportError:
+    _INCREMENTAL_AVAILABLE = False
+
+try:
+    from sim.formal_test.reliability_report import ReliabilityAnalyzer
+    _RELIABILITY_AVAILABLE = True
+except ImportError:
+    _RELIABILITY_AVAILABLE = False
+
+try:
+    from sim.formal_test.formal_verification import FormalVerifier
+    _FORMAL_AVAILABLE = True
+except ImportError:
+    _FORMAL_AVAILABLE = False
+
+try:
+    from sim.formal_test.strategy_auto_select import StrategyAutoSelector
+    _STRATEGY_SELECT_AVAILABLE = True
+except ImportError:
+    _STRATEGY_SELECT_AVAILABLE = False
+
+try:
+    from sim.formal_test.fpga_bitstream_hardening import FPGABitstreamHardener
+    _FPGA_AVAILABLE = True
+except ImportError:
+    _FPGA_AVAILABLE = False
 
 
 class HardeningPipeline:
@@ -352,6 +392,124 @@ class HardeningPipeline:
         except subprocess.TimeoutExpired:
             print(f"[VERIFY] iverilog 超时")
             return False
+
+    def incremental_update(self, modified_rtl: str, previous_hardened_rtl: Optional[str] = None) -> Dict:
+        """增量加固: 对已加固设计进行增量修改和验证"""
+        if not _INCREMENTAL_AVAILABLE:
+            return {"success": False, "error": "增量加固模块不可用"}
+
+        with open(self.design_file, 'r') as f:
+            original_rtl = f.read()
+
+        hardener = IncrementalHardener()
+        result = hardener.incremental_update(original_rtl, modified_rtl, previous_hardened_rtl)
+
+        if result["update_type"] == "incremental":
+            print(f"[INCREMENTAL] 增量更新成功")
+            print(f"  - 添加信号: {len(result.get('added_signals', []))}")
+            print(f"  - 删除信号: {len(result.get('removed_signals', []))}")
+            print(f"  - 修改信号: {len(result.get('modified_signals', []))}")
+        else:
+            print(f"[INCREMENTAL] 需要全量重新加固")
+
+        return result
+
+    def generate_reliability_report(self, output_path: Optional[str] = None) -> Dict:
+        """生成可靠性分析报告"""
+        if not _RELIABILITY_AVAILABLE:
+            return {"success": False, "error": "可靠性分析模块不可用"}
+
+        analyzer = ReliabilityAnalyzer()
+
+        vulnerability_results = []
+        for sig, strategy in self.strategy_map.items():
+            info = self.module_info[sig]
+            vulnerability_results.append({
+                'signal': sig,
+                'type': info['type'],
+                'width': info['width'],
+                'strategy': strategy,
+                'vulnerability': 0.3 if strategy in ('tmr_state', 'cnt_comp', 'ecc') else 0.7,
+            })
+
+        report = analyzer.generate_report(vulnerability_results)
+
+        if output_path:
+            with open(output_path, 'w') as f:
+                json.dump(report, f, indent=2, ensure_ascii=False)
+            print(f"[RELIABILITY] 报告生成: {output_path}")
+
+        return report
+
+    def formal_verify(self, rtl_files: Optional[List[str]] = None) -> Dict:
+        """形式化验证: 验证加固后设计的功能正确性"""
+        if not _FORMAL_AVAILABLE:
+            return {"success": False, "error": "形式化验证模块不可用"}
+
+        verifier = FormalVerifier()
+
+        if not verifier.is_available():
+            print(f"[FORMAL] SymbiYosys 不可用，跳过形式化验证")
+            return {"success": False, "error": "SymbiYosys 不可用"}
+
+        if rtl_files is None:
+            rtl_files = [self.design_file]
+
+        result = verifier.verify(rtl_files)
+        print(f"[FORMAL] 验证结果: {result.get('status', 'unknown')}")
+
+        return result
+
+    def recommend_strategy(self, constraints: Optional[Dict] = None) -> List[Dict]:
+        """自动推荐加固策略"""
+        if not _STRATEGY_SELECT_AVAILABLE:
+            return []
+
+        selector = StrategyAutoSelector()
+
+        with open(self.design_file, 'r') as f:
+            rtl_content = f.read()
+
+        recommendations = selector.recommend(rtl_content, constraints)
+
+        print(f"\n[STRATEGY] 推荐策略:")
+        for i, rec in enumerate(recommendations, 1):
+            print(f"  {i}. {rec['strategy']}")
+            print(f"     得分: {rec['score']:.2f}")
+            print(f"     面积开销: {rec['metrics']['area_overhead']}")
+            print(f"     可靠性: {rec['metrics']['reliability']}")
+
+        return recommendations
+
+    def fpga_bitstream_harden(self, bitstream_path: str, output_path: str,
+                               tmr_blocks: Optional[List[str]] = None,
+                               enable_ecc: bool = False,
+                               enable_scrubbing: bool = True) -> Dict:
+        """FPGA 比特流加固"""
+        if not _FPGA_AVAILABLE:
+            return {"success": False, "error": "FPGA比特流加固模块不可用"}
+
+        hardener = FPGABitstreamHardener()
+
+        if not hardener.load_bitstream(bitstream_path):
+            return {"success": False, "error": "加载比特流失败"}
+
+        if tmr_blocks:
+            hardener.configure_tmr(tmr_blocks)
+
+        if enable_ecc:
+            hardener.configure_ecc_region('CONFIG_REGION', 0x0, 0xFFFF)
+
+        hardener.enable_scrubbing(enable_scrubbing, 1000)
+
+        result = hardener.generate_hardened_bitstream(output_path)
+
+        if result['success']:
+            print(f"[FPGA] 比特流加固完成: {output_path}")
+            print(f"  - 应用策略: {', '.join(result['applied_strategies'])}")
+            print(f"  - 可靠性提升: {result['reliability_improvement'] * 100:.1f}%")
+
+        return result
     
     def print_summary(self):
         """打印管线摘要"""

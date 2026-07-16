@@ -272,6 +272,9 @@ class HardeningGUI:
             ('策略推荐', self._switch_to_tab_strategy_recommend, 'Recommend.TButton'),
             ('效果可视化', self._switch_to_tab_visualization, 'Visualize.TButton'),
             ('增量加固', self._switch_to_tab_incremental, 'Action.TButton'),
+            ('FPGA加固', self._switch_to_tab_fpga, 'Action.TButton'),
+            ('可靠性报告', self._switch_to_tab_reliability, 'Export.TButton'),
+            ('形式化验证', self._switch_to_tab_formal, 'Run.TButton'),
             ('Web GUI', self._switch_to_tab_web_gui, 'Export.TButton'),
         ]
 
@@ -321,6 +324,9 @@ class HardeningGUI:
         self._build_tab_strategy_recommend()
         self._build_tab_visualization()
         self._build_tab_incremental()
+        self._build_tab_fpga()
+        self._build_tab_reliability()
+        self._build_tab_formal()
         self._build_tab_web_gui()
         self._build_tab_reports()
 
@@ -401,11 +407,20 @@ class HardeningGUI:
     def _switch_to_tab_incremental(self):
         self.notebook.select(7)
 
-    def _switch_to_tab_web_gui(self):
+    def _switch_to_tab_fpga(self):
         self.notebook.select(8)
 
-    def _switch_to_tab_reports(self):
+    def _switch_to_tab_reliability(self):
         self.notebook.select(9)
+
+    def _switch_to_tab_formal(self):
+        self.notebook.select(10)
+
+    def _switch_to_tab_web_gui(self):
+        self.notebook.select(11)
+
+    def _switch_to_tab_reports(self):
+        self.notebook.select(12)
 
     def _quick_harden(self):
         self.notebook.select(4)
@@ -2050,6 +2065,493 @@ class HardeningGUI:
             os.startfile(REPORTS_DIR)
         else:
             messagebox.showerror("错误", f"报告目录不存在:\n{REPORTS_DIR}")
+
+    # ========================================================
+    # Tab 11: FPGA 比特流加固 (FPGA Bitstream Hardening)
+    # ========================================================
+    def _build_tab_fpga(self):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text=" FPGA 比特流加固 ")
+
+        f_input = ttk.LabelFrame(tab, text="输入配置", padding=8)
+        f_input.pack(fill=tk.X, padx=5, pady=(5, 0))
+
+        row1 = ttk.Frame(f_input)
+        row1.pack(fill=tk.X, pady=2)
+        self._make_label(row1, "比特流文件:").pack(side=tk.LEFT)
+        self.fpga_bitstream = tk.StringVar()
+        ent_bit = ttk.Entry(row1, textvariable=self.fpga_bitstream, width=50)
+        ent_bit.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        btn_bit = ttk.Button(row1, text="浏览...", command=self._fpga_browse_bitstream)
+        btn_bit.pack(side=tk.LEFT)
+        add_tooltip(btn_bit, "选择 .bit 格式的 FPGA 比特流文件")
+
+        row2 = ttk.Frame(f_input)
+        row2.pack(fill=tk.X, pady=2)
+        self._make_label(row2, "输出文件:").pack(side=tk.LEFT)
+        self.fpga_output = tk.StringVar()
+        ent_out = ttk.Entry(row2, textvariable=self.fpga_output, width=50)
+        ent_out.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        btn_out = ttk.Button(row2, text="浏览...", command=self._fpga_browse_output)
+        btn_out.pack(side=tk.LEFT)
+        add_tooltip(btn_out, "选择加固后比特流保存路径")
+
+        f_options = ttk.LabelFrame(tab, text="加固选项", padding=8)
+        f_options.pack(fill=tk.X, padx=5, pady=5)
+
+        self.fpga_tmr = tk.BooleanVar(value=True)
+        cb_tmr = ttk.Checkbutton(f_options, text="启用 TMR (三模冗余)", variable=self.fpga_tmr)
+        cb_tmr.pack(anchor=tk.W)
+
+        self.fpga_ecc = tk.BooleanVar(value=False)
+        cb_ecc = ttk.Checkbutton(f_options, text="启用 ECC (纠错码)", variable=self.fpga_ecc)
+        cb_ecc.pack(anchor=tk.W)
+
+        self.fpga_scrub = tk.BooleanVar(value=True)
+        cb_scrub = ttk.Checkbutton(f_options, text="启用比特流刷新 (Scrubbing)", variable=self.fpga_scrub)
+        cb_scrub.pack(anchor=tk.W)
+
+        self.fpga_pr = tk.BooleanVar(value=False)
+        cb_pr = ttk.Checkbutton(f_options, text="启用 Partial Reconfiguration", variable=self.fpga_pr)
+        cb_pr.pack(anchor=tk.W)
+
+        f_action = ttk.Frame(tab)
+        f_action.pack(fill=tk.X, padx=5, pady=(0, 5))
+        btn_harden = ttk.Button(f_action, text="执行比特流加固", command=self._fpga_run_hardening, style='Run.TButton')
+        btn_harden.pack(side=tk.LEFT, padx=(0, 5))
+        add_tooltip(btn_harden, "对 FPGA 比特流进行加固处理")
+
+        btn_report = ttk.Button(f_action, text="生成可靠性报告", command=self._fpga_generate_report, style='Export.TButton')
+        btn_report.pack(side=tk.LEFT)
+        add_tooltip(btn_report, "生成 FPGA 比特流可靠性分析报告")
+
+        f_result = ttk.LabelFrame(tab, text="加固结果", padding=5)
+        f_result.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
+
+        self.fpga_result_text = scrolledtext.ScrolledText(f_result, height=15,
+                                                          font=("Consolas", 9))
+        self.fpga_result_text.pack(fill=tk.BOTH, expand=True)
+
+        self.fpga_result_text.insert("1.0", "FPGA 比特流加固工具\n\n")
+        self.fpga_result_text.insert(tk.END, "支持以下加固策略:\n")
+        self.fpga_result_text.insert(tk.END, "  • TMR: 三模冗余\n")
+        self.fpga_result_text.insert(tk.END, "  • ECC: 纠错码保护\n")
+        self.fpga_result_text.insert(tk.END, "  • Scrubbing: 比特流自动刷新\n")
+        self.fpga_result_text.insert(tk.END, "  • PR: Partial Reconfiguration\n\n")
+        self.fpga_result_text.insert(tk.END, "请选择比特流文件并配置加固选项后点击执行。")
+
+    def _fpga_browse_bitstream(self):
+        path = filedialog.askopenfilename(
+            title="选择 FPGA 比特流文件",
+            filetypes=[("比特流文件", "*.bit"), ("所有文件", "*.*")],
+            initialdir=TEST_MOCK_DIR if os.path.isdir(TEST_MOCK_DIR) else SCRIPT_DIR,
+        )
+        if path:
+            self.fpga_bitstream.set(path)
+            base, ext = os.path.splitext(path)
+            self.fpga_output.set(base + "_hardened" + ext)
+
+    def _fpga_browse_output(self):
+        path = filedialog.asksaveasfilename(
+            title="保存加固后比特流",
+            defaultextension=".bit",
+            filetypes=[("比特流文件", "*.bit"), ("所有文件", "*.*")],
+        )
+        if path:
+            self.fpga_output.set(path)
+
+    def _fpga_run_hardening(self):
+        bitstream_path = self.fpga_bitstream.get()
+        output_path = self.fpga_output.get()
+
+        if not bitstream_path or not os.path.isfile(bitstream_path):
+            messagebox.showerror("错误", "请选择有效的比特流文件")
+            return
+        if not output_path:
+            messagebox.showerror("错误", "请指定输出文件路径")
+            return
+
+        self._set_status("FPGA 比特流加固中...", "FPGA 比特流加固")
+
+        def task():
+            try:
+                sys.path.insert(0, os.path.join(SCRIPT_DIR, 'sim', 'formal_test'))
+                from fpga_bitstream_hardening import FPGABitstreamHardener
+
+                hardener = FPGABitstreamHardener()
+
+                if not hardener.load_bitstream(bitstream_path):
+                    self.fpga_result_text.delete("1.0", tk.END)
+                    self.fpga_result_text.insert("1.0", "错误: 加载比特流文件失败")
+                    return
+
+                if self.fpga_tmr.get():
+                    hardener.configure_tmr(['TOP_MODULE'])
+
+                if self.fpga_ecc.get():
+                    hardener.configure_ecc_region('CONFIG_REGION', 0x0, 0xFFFF)
+
+                hardener.enable_scrubbing(self.fpga_scrub.get(), 1000)
+                hardener.enable_partial_reconfig(self.fpga_pr.get())
+
+                result = hardener.generate_hardened_bitstream(output_path)
+
+                self.fpga_result_text.delete("1.0", tk.END)
+                self.fpga_result_text.insert("1.0", "=" * 60 + "\n")
+                self.fpga_result_text.insert(tk.END, "FPGA 比特流加固结果\n")
+                self.fpga_result_text.insert(tk.END, "=" * 60 + "\n\n")
+
+                if result['success']:
+                    self.fpga_result_text.insert(tk.END, "✅ 加固成功\n\n")
+                    self.fpga_result_text.insert(tk.END, f"输入文件: {bitstream_path}\n")
+                    self.fpga_result_text.insert(tk.END, f"输出文件: {output_path}\n")
+                    self.fpga_result_text.insert(tk.END, f"应用策略: {', '.join(result['applied_strategies'])}\n")
+                    self.fpga_result_text.insert(tk.END, f"可靠性提升: {result['reliability_improvement'] * 100:.1f}%\n")
+                    self.fpga_result_text.insert(tk.END, f"面积开销: {result['overhead_percent']:.1f}%\n")
+                else:
+                    self.fpga_result_text.insert(tk.END, f"❌ 加固失败: {result.get('error', '未知错误')}\n")
+
+                self._set_status("FPGA 比特流加固完成", "FPGA 比特流加固")
+
+            except Exception as e:
+                self.fpga_result_text.delete("1.0", tk.END)
+                self.fpga_result_text.insert("1.0", f"错误: {str(e)}")
+                messagebox.showerror("FPGA 加固错误", f"运行 FPGA 比特流加固时出错:\n{str(e)}")
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _fpga_generate_report(self):
+        bitstream_path = self.fpga_bitstream.get()
+        if not bitstream_path or not os.path.isfile(bitstream_path):
+            messagebox.showerror("错误", "请选择有效的比特流文件")
+            return
+
+        self._set_status("生成 FPGA 可靠性报告...", "FPGA 可靠性报告")
+
+        def task():
+            try:
+                sys.path.insert(0, os.path.join(SCRIPT_DIR, 'sim', 'formal_test'))
+                from fpga_bitstream_hardening import FPGABitstreamHardener
+
+                hardener = FPGABitstreamHardener()
+                hardener.load_bitstream(bitstream_path)
+
+                if self.fpga_tmr.get():
+                    hardener.configure_tmr(['TOP_MODULE'])
+                if self.fpga_ecc.get():
+                    hardener.configure_ecc_region('CONFIG_REGION', 0x0, 0xFFFF)
+                hardener.enable_scrubbing(self.fpga_scrub.get(), 1000)
+
+                report = hardener.generate_reliability_report()
+
+                self.fpga_result_text.delete("1.0", tk.END)
+                self.fpga_result_text.insert("1.0", json.dumps(report, indent=2, ensure_ascii=False))
+
+                report_path = os.path.join(REPORTS_DIR, 'fpga_reliability_report.json')
+                os.makedirs(REPORTS_DIR, exist_ok=True)
+                with open(report_path, 'w', encoding='utf-8') as f:
+                    json.dump(report, f, indent=2, ensure_ascii=False)
+
+                self._set_status(f"报告已生成: {report_path}", "FPGA 可靠性报告")
+
+            except Exception as e:
+                self.fpga_result_text.delete("1.0", tk.END)
+                self.fpga_result_text.insert("1.0", f"错误: {str(e)}")
+                messagebox.showerror("报告生成错误", f"生成报告时出错:\n{str(e)}")
+
+        threading.Thread(target=task, daemon=True).start()
+
+    # ========================================================
+    # Tab 12: 可靠性报告 (Reliability Report)
+    # ========================================================
+    def _build_tab_reliability(self):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text=" 可靠性报告 ")
+
+        f_input = ttk.LabelFrame(tab, text="输入配置", padding=8)
+        f_input.pack(fill=tk.X, padx=5, pady=(5, 0))
+
+        row1 = ttk.Frame(f_input)
+        row1.pack(fill=tk.X, pady=2)
+        self._make_label(row1, "RTL 文件:").pack(side=tk.LEFT)
+        self.rel_rtl_file = tk.StringVar()
+        ent_rtl = ttk.Entry(row1, textvariable=self.rel_rtl_file, width=50)
+        ent_rtl.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        btn_rtl = ttk.Button(row1, text="浏览...", command=self._rel_browse_rtl)
+        btn_rtl.pack(side=tk.LEFT)
+        add_tooltip(btn_rtl, "选择 RTL 文件进行可靠性分析")
+
+        f_action = ttk.Frame(tab)
+        f_action.pack(fill=tk.X, padx=5, pady=5)
+        btn_analyze = ttk.Button(f_action, text="生成可靠性报告", command=self._rel_generate_report, style='Export.TButton')
+        btn_analyze.pack(side=tk.LEFT, padx=(0, 5))
+        add_tooltip(btn_analyze, "分析设计并生成可靠性报告")
+
+        btn_export = ttk.Button(f_action, text="导出报告", command=self._rel_export_report, style='Export.TButton')
+        btn_export.pack(side=tk.LEFT)
+        add_tooltip(btn_export, "导出报告为 JSON 文件")
+
+        f_result = ttk.LabelFrame(tab, text="可靠性分析结果", padding=5)
+        f_result.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
+
+        self.rel_result_text = scrolledtext.ScrolledText(f_result, height=20,
+                                                        font=("Consolas", 9))
+        self.rel_result_text.pack(fill=tk.BOTH, expand=True)
+
+        self.rel_result_text.insert("1.0", "可靠性分析报告工具\n\n")
+        self.rel_result_text.insert(tk.END, "支持计算以下指标:\n")
+        self.rel_result_text.insert(tk.END, "  • AVF: 架构脆弱性因子\n")
+        self.rel_result_text.insert(tk.END, "  • MTBF: 平均故障间隔时间\n")
+        self.rel_result_text.insert(tk.END, "  • 故障率\n")
+        self.rel_result_text.insert(tk.END, "  • 可靠性改进建议\n\n")
+        self.rel_result_text.insert(tk.END, "请选择 RTL 文件后点击生成报告。")
+
+        self._rel_report_data = None
+
+    def _rel_browse_rtl(self):
+        path = filedialog.askopenfilename(
+            title="选择 RTL 文件",
+            filetypes=[("Verilog 文件", "*.v"), ("SystemVerilog 文件", "*.sv"),
+                       ("所有文件", "*.*")],
+            initialdir=TEST_MOCK_DIR if os.path.isdir(TEST_MOCK_DIR) else SCRIPT_DIR,
+        )
+        if path:
+            self.rel_rtl_file.set(path)
+
+    def _rel_generate_report(self):
+        rtl_path = self.rel_rtl_file.get()
+        if not rtl_path or not os.path.isfile(rtl_path):
+            messagebox.showerror("错误", "请选择有效的 RTL 文件")
+            return
+
+        self._set_status("生成可靠性报告中...", "可靠性分析")
+
+        def task():
+            try:
+                sys.path.insert(0, SCRIPT_DIR)
+                from hardening_pipeline import HardeningPipeline
+
+                pipeline = HardeningPipeline(optimization_goal='balanced')
+                pipeline.load_design(rtl_path)
+                pipeline.analyze()
+                pipeline.route_strategies()
+
+                report = pipeline.generate_reliability_report()
+
+                self._rel_report_data = report
+
+                self.rel_result_text.delete("1.0", tk.END)
+                self.rel_result_text.insert("1.0", "=" * 60 + "\n")
+                self.rel_result_text.insert(tk.END, "可靠性分析报告\n")
+                self.rel_result_text.insert(tk.END, "=" * 60 + "\n\n")
+
+                analysis = report.get('analysis', {})
+                if 'overall_avf' in analysis:
+                    self.rel_result_text.insert(tk.END, f"📊 总体 AVF: {analysis['overall_avf']:.4f}\n")
+                if 'failure_rate' in analysis:
+                    self.rel_result_text.insert(tk.END, f"📉 故障率: {analysis['failure_rate']:.2e} failures/hour\n")
+                if 'mtbf' in analysis:
+                    self.rel_result_text.insert(tk.END, f"⏱️ MTBF: {analysis['mtbf']:.2f} 小时\n")
+                if 'reliability_improvement' in analysis:
+                    self.rel_result_text.insert(tk.END, f"📈 可靠性提升: {analysis['reliability_improvement'] * 100:.1f}%\n")
+
+                recommendations = report.get('recommendations', [])
+                if recommendations:
+                    self.rel_result_text.insert(tk.END, "\n💡 改进建议:\n")
+                    for i, rec in enumerate(recommendations, 1):
+                        self.rel_result_text.insert(tk.END, f"  {i}. {rec}\n")
+
+                summary = report.get('summary', {})
+                if summary:
+                    self.rel_result_text.insert(tk.END, "\n📝 摘要:\n")
+                    self.rel_result_text.insert(tk.END, json.dumps(summary, indent=2, ensure_ascii=False))
+
+                self._set_status("可靠性报告生成完成", "可靠性分析")
+
+            except Exception as e:
+                self.rel_result_text.delete("1.0", tk.END)
+                self.rel_result_text.insert("1.0", f"错误: {str(e)}")
+                messagebox.showerror("可靠性分析错误", f"生成报告时出错:\n{str(e)}")
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _rel_export_report(self):
+        if not self._rel_report_data:
+            messagebox.showwarning("提示", "请先生成可靠性报告")
+            return
+
+        path = filedialog.asksaveasfilename(
+            title="导出可靠性报告",
+            defaultextension=".json",
+            filetypes=[("JSON 文件", "*.json"), ("所有文件", "*.*")],
+            initialdir=REPORTS_DIR,
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(self._rel_report_data, f, indent=2, ensure_ascii=False)
+
+            self._set_status(f"报告已导出: {path}", "导出可靠性报告")
+            messagebox.showinfo("导出成功", f"报告已保存至:\n{path}")
+        except Exception as e:
+            messagebox.showerror("导出失败", str(e))
+
+    # ========================================================
+    # Tab 13: 形式化验证 (Formal Verification)
+    # ========================================================
+    def _build_tab_formal(self):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text=" 形式化验证 ")
+
+        f_input = ttk.LabelFrame(tab, text="输入配置", padding=8)
+        f_input.pack(fill=tk.X, padx=5, pady=(5, 0))
+
+        row1 = ttk.Frame(f_input)
+        row1.pack(fill=tk.X, pady=2)
+        self._make_label(row1, "RTL 文件:").pack(side=tk.LEFT)
+        self.fml_rtl_file = tk.StringVar()
+        ent_rtl = ttk.Entry(row1, textvariable=self.fml_rtl_file, width=50)
+        ent_rtl.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        btn_rtl = ttk.Button(row1, text="浏览...", command=self._fml_browse_rtl)
+        btn_rtl.pack(side=tk.LEFT)
+        add_tooltip(btn_rtl, "选择 RTL 文件进行形式化验证")
+
+        row2 = ttk.Frame(f_input)
+        row2.pack(fill=tk.X, pady=2)
+        self._make_label(row2, "SVA 文件:").pack(side=tk.LEFT)
+        self.fml_sva_file = tk.StringVar()
+        ent_sva = ttk.Entry(row2, textvariable=self.fml_sva_file, width=50)
+        ent_sva.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        btn_sva = ttk.Button(row2, text="浏览...", command=self._fml_browse_sva)
+        btn_sva.pack(side=tk.LEFT)
+        add_tooltip(btn_sva, "选择 SVA 属性文件（可选）")
+
+        f_action = ttk.Frame(tab)
+        f_action.pack(fill=tk.X, padx=5, pady=5)
+        btn_verify = ttk.Button(f_action, text="执行形式化验证", command=self._fml_run_verify, style='Run.TButton')
+        btn_verify.pack(side=tk.LEFT, padx=(0, 5))
+        add_tooltip(btn_verify, "使用 SymbiYosys 执行形式化验证")
+
+        btn_check = ttk.Button(f_action, text="检查 SymbiYosys", command=self._fml_check_sby)
+        btn_check.pack(side=tk.LEFT)
+        add_tooltip(btn_check, "检查 SymbiYosys 是否可用")
+
+        f_result = ttk.LabelFrame(tab, text="验证结果", padding=5)
+        f_result.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
+
+        self.fml_result_text = scrolledtext.ScrolledText(f_result, height=20,
+                                                        font=("Consolas", 9))
+        self.fml_result_text.pack(fill=tk.BOTH, expand=True)
+
+        self.fml_result_text.insert("1.0", "形式化验证工具\n\n")
+        self.fml_result_text.insert(tk.END, "集成 SymbiYosys 进行形式化验证:\n")
+        self.fml_result_text.insert(tk.END, "  • 验证加固后设计的功能正确性\n")
+        self.fml_result_text.insert(tk.END, "  • 支持 SVA 属性验证\n")
+        self.fml_result_text.insert(tk.END, "  • 自动生成验证配置文件\n\n")
+        self.fml_result_text.insert(tk.END, "注意: 需要安装 SymbiYosys 才能使用此功能。\n")
+        self.fml_result_text.insert(tk.END, "请先点击 '检查 SymbiYosys' 确认环境。")
+
+    def _fml_browse_rtl(self):
+        path = filedialog.askopenfilename(
+            title="选择 RTL 文件",
+            filetypes=[("Verilog 文件", "*.v"), ("SystemVerilog 文件", "*.sv"),
+                       ("所有文件", "*.*")],
+            initialdir=TEST_MOCK_DIR if os.path.isdir(TEST_MOCK_DIR) else SCRIPT_DIR,
+        )
+        if path:
+            self.fml_rtl_file.set(path)
+
+    def _fml_browse_sva(self):
+        path = filedialog.askopenfilename(
+            title="选择 SVA 文件",
+            filetypes=[("SVA 文件", "*.sva"), ("所有文件", "*.*")],
+            initialdir=TEST_MOCK_DIR if os.path.isdir(TEST_MOCK_DIR) else SCRIPT_DIR,
+        )
+        if path:
+            self.fml_sva_file.set(path)
+
+    def _fml_check_sby(self):
+        self._set_status("检查 SymbiYosys...", "检查形式化验证环境")
+
+        def task():
+            try:
+                sys.path.insert(0, os.path.join(SCRIPT_DIR, 'sim', 'formal_test'))
+                from formal_verification import FormalVerifier
+
+                verifier = FormalVerifier()
+
+                self.fml_result_text.delete("1.0", tk.END)
+                if verifier.is_available():
+                    self.fml_result_text.insert("1.0", "✅ SymbiYosys 可用\n\n")
+                    self.fml_result_text.insert(tk.END, f"Yosys 路径: {verifier._yosys_path}\n")
+                    self.fml_result_text.insert(tk.END, f"Sby 路径: {verifier._sby_path}\n\n")
+                    self.fml_result_text.insert(tk.END, "可以执行形式化验证。")
+                    self._set_status("SymbiYosys 可用", "形式化验证环境")
+                else:
+                    self.fml_result_text.insert("1.0", "❌ SymbiYosys 不可用\n\n")
+                    self.fml_result_text.insert(tk.END, "请安装 SymbiYosys 以启用形式化验证功能。\n")
+                    self.fml_result_text.insert(tk.END, "安装指南: https://symbiyosys.readthedocs.io/\n")
+                    self._set_status("SymbiYosys 不可用", "形式化验证环境")
+
+            except Exception as e:
+                self.fml_result_text.delete("1.0", tk.END)
+                self.fml_result_text.insert("1.0", f"错误: {str(e)}")
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def _fml_run_verify(self):
+        rtl_path = self.fml_rtl_file.get()
+        if not rtl_path or not os.path.isfile(rtl_path):
+            messagebox.showerror("错误", "请选择有效的 RTL 文件")
+            return
+
+        self._set_status("执行形式化验证中...", "形式化验证")
+
+        def task():
+            try:
+                sys.path.insert(0, os.path.join(SCRIPT_DIR, 'sim', 'formal_test'))
+                from formal_verification import FormalVerifier
+
+                verifier = FormalVerifier()
+
+                if not verifier.is_available():
+                    self.fml_result_text.delete("1.0", tk.END)
+                    self.fml_result_text.insert("1.0", "❌ SymbiYosys 不可用，无法执行验证")
+                    return
+
+                sva_path = self.fml_sva_file.get() if self.fml_sva_file.get() else None
+                sva_files = [sva_path] if sva_path else None
+
+                result = verifier.verify([rtl_path], sva_files=sva_files)
+
+                self.fml_result_text.delete("1.0", tk.END)
+                self.fml_result_text.insert("1.0", "=" * 60 + "\n")
+                self.fml_result_text.insert(tk.END, "形式化验证结果\n")
+                self.fml_result_text.insert(tk.END, "=" * 60 + "\n\n")
+
+                if result.get('success'):
+                    status = result.get('status', 'unknown')
+                    self.fml_result_text.insert(tk.END, f"状态: {status}\n\n")
+
+                    if 'properties' in result:
+                        for prop in result['properties']:
+                            p_status = prop.get('status', 'unknown')
+                            p_name = prop.get('name', 'unknown')
+                            color = "green" if p_status == 'PASS' else "red"
+                            self.fml_result_text.insert(tk.END, f"  {p_name}: {p_status}\n", color)
+                else:
+                    self.fml_result_text.insert(tk.END, f"❌ 验证失败: {result.get('error', '未知错误')}\n")
+
+                self._set_status("形式化验证完成", "形式化验证")
+
+            except Exception as e:
+                self.fml_result_text.delete("1.0", tk.END)
+                self.fml_result_text.insert("1.0", f"错误: {str(e)}")
+                messagebox.showerror("验证错误", f"执行形式化验证时出错:\n{str(e)}")
+
+        threading.Thread(target=task, daemon=True).start()
 
     # ========================================================
     # 窗口关闭

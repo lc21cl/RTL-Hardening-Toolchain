@@ -1,298 +1,329 @@
-import os
+#!/usr/bin/env python3
+"""incremental_hardening.py — 增量加固模块
+
+支持对已加固设计进行增量修改和验证，避免全量重新加固。
+
+用法:
+    from incremental_hardening import IncrementalHardener
+
+    hardener = IncrementalHardener()
+    result = hardener.incremental_update(original_rtl, modified_rtl, previous_hardened)
+    report = hardener.get_update_report()
+"""
+
+import re
 import json
-import hashlib
-from typing import Dict, List, Any, Optional
-from logger import logger
-
-_INCREMENTAL_DATA_FILE = '.incremental_hardening.json'
+from typing import List, Dict, Any, Optional
 
 
-def _compute_module_hash(module_info: Dict[str, Any]) -> str:
-    """Compute a hash for a module to detect changes.
+class IncrementalHardener:
+    """增量加固器。
 
-    Args:
-        module_info: Module information
-
-    Returns:
-        Hash string
+    支持对已加固设计进行增量修改和验证。
     """
-    data_str = json.dumps(module_info, sort_keys=True, ensure_ascii=False)
-    return hashlib.md5(data_str.encode('utf-8')).hexdigest()
 
+    def __init__(self):
+        """初始化增量加固器。"""
+        self._update_history: List[Dict[str, Any]] = []
 
-def _compute_design_hash(design_analysis: Dict[str, Any]) -> str:
-    """Compute a hash for the entire design.
+    def _parse_module(self, rtl_content: str) -> Dict[str, Any]:
+        """解析 RTL 模块结构。
 
-    Args:
-        design_analysis: Design analysis output
+        Args:
+            rtl_content: RTL 代码
 
-    Returns:
-        Hash string
-    """
-    relevant_data = {
-        'module_name': design_analysis.get('module_name'),
-        'registers': design_analysis.get('registers'),
-        'signals': design_analysis.get('signals'),
-        'submodules': {
-            name: {
-                'registers': info.get('registers', []),
-                'signals': info.get('signals', []),
-            }
-            for name, info in design_analysis.get('submodules', {}).items()
-        },
-    }
-    data_str = json.dumps(relevant_data, sort_keys=True, ensure_ascii=False)
-    return hashlib.md5(data_str.encode('utf-8')).hexdigest()
-
-
-def save_incremental_data(
-    output_dir: str,
-    design_hash: str,
-    module_strategy_map: Dict[str, str],
-    hardened_signals: Dict[str, str],
-    compatibility_info: Optional[Dict[str, Any]] = None,
-) -> None:
-    """Save incremental hardening data for future reuse.
-
-    Args:
-        output_dir: Output directory
-        design_hash: Design hash string
-        module_strategy_map: Module strategy mapping
-        hardened_signals: Hardened signal mapping
-        compatibility_info: Compatibility resolution info
-    """
-    incremental_data = {
-        'design_hash': design_hash,
-        'module_strategy_map': module_strategy_map,
-        'hardened_signals': hardened_signals,
-        'compatibility_info': compatibility_info or {},
-        'timestamp': json.dumps({'__timestamp__': 'auto'}, default=str),
-    }
-
-    data_path = os.path.join(output_dir, _INCREMENTAL_DATA_FILE)
-    with open(data_path, 'w', encoding='utf-8') as f:
-        json.dump(incremental_data, f, indent=2, ensure_ascii=False)
-
-    logger.print(f"  [RAG]   Incremental data saved to: {data_path}")
-
-
-def load_incremental_data(output_dir: str) -> Optional[Dict[str, Any]]:
-    """Load previously saved incremental hardening data.
-
-    Args:
-        output_dir: Output directory
-
-    Returns:
-        Incremental data dict if exists, None otherwise
-    """
-    data_path = os.path.join(output_dir, _INCREMENTAL_DATA_FILE)
-    if not os.path.exists(data_path):
-        logger.print(f"  [RAG]   No incremental data found at: {data_path}")
-        return None
-
-    try:
-        with open(data_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        logger.print(f"  [RAG]   Incremental data loaded from: {data_path}")
-        return data
-    except Exception as e:
-        logger.print(f"  [RAG]   Failed to load incremental data: {e}")
-        return None
-
-
-def detect_design_changes(
-    design_analysis: Dict[str, Any],
-    previous_data: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Detect changes between current and previous design.
-
-    Args:
-        design_analysis: Current design analysis
-        previous_data: Previously saved incremental data
-
-    Returns:
-        Change detection result
-    """
-    logger.section("Incremental Design Change Detection")
-    logger.print("  [RAG] ===========================================")
-    logger.print("  [RAG] Change Detection Started")
-    logger.print("  [RAG] ===========================================")
-
-    current_hash = _compute_design_hash(design_analysis)
-    previous_hash = previous_data.get('design_hash', '') if previous_data else ''
-
-    changes = {
-        'design_changed': current_hash != previous_hash,
-        'current_hash': current_hash,
-        'previous_hash': previous_hash,
-        'new_modules': [],
-        'modified_modules': [],
-        'removed_modules': [],
-        'unchanged_modules': [],
-    }
-
-    if not previous_data:
-        logger.print("  [RAG]   No previous data found - full hardening required")
-        changes['design_changed'] = True
-        return changes
-
-    if current_hash == previous_hash:
-        logger.print("  [RAG]   Design unchanged - using cached results")
-        changes['design_changed'] = False
-        return changes
-
-    logger.print("  [RAG]   Design has changed - analyzing changes...")
-
-    previous_strategy_map = previous_data.get('module_strategy_map', {})
-    current_submodules = design_analysis.get('submodules', {})
-    current_top_regs = design_analysis.get('registers', [])
-
-    previous_modules = set(previous_strategy_map.keys())
-    current_modules = set(current_submodules.keys())
-    current_modules.add(design_analysis.get('module_name', 'top'))
-
-    changes['new_modules'] = sorted(list(current_modules - previous_modules))
-    changes['removed_modules'] = sorted(list(previous_modules - current_modules))
-
-    for module_name in current_modules & previous_modules:
-        if module_name == design_analysis.get('module_name', 'top'):
-            current_info = {'registers': current_top_regs}
-        else:
-            current_info = current_submodules.get(module_name, {})
-
-        current_hash = _compute_module_hash(current_info)
-
-        prev_info = {
-            'registers': [
-                r for r in previous_data.get('hardened_signals', {}).keys()
-                if module_name + '.' in r or (module_name == design_analysis.get('module_name', 'top') and '.' not in r)
-            ]
-        }
-        prev_hash = _compute_module_hash(prev_info)
-
-        if current_hash != prev_hash:
-            changes['modified_modules'].append(module_name)
-        else:
-            changes['unchanged_modules'].append(module_name)
-
-    logger.print(f"  [RAG]   New modules: {changes['new_modules']}")
-    logger.print(f"  [RAG]   Modified modules: {changes['modified_modules']}")
-    logger.print(f"  [RAG]   Removed modules: {changes['removed_modules']}")
-    logger.print(f"  [RAG]   Unchanged modules: {changes['unchanged_modules']}")
-
-    logger.print("  [RAG] ")
-    logger.print("  [RAG] ===========================================")
-    logger.print("  [RAG] Change Detection Completed")
-    logger.print("  [RAG] ===========================================")
-
-    return changes
-
-
-def apply_incremental_hardening(
-    design_analysis: Dict[str, Any],
-    previous_data: Dict[str, Any],
-    changes: Dict[str, Any],
-    default_strategy: str = 'tmr',
-) -> Dict[str, Any]:
-    """Apply incremental hardening, reusing previous results where possible.
-
-    Args:
-        design_analysis: Current design analysis
-        previous_data: Previously saved incremental data
-        changes: Change detection result
-        default_strategy: Default strategy for new modules
-
-    Returns:
-        Updated strategy mapping
-    """
-    logger.section("Incremental Hardening Application")
-    logger.print("  [RAG] ===========================================")
-    logger.print("  [RAG] Incremental Hardening Started")
-    logger.print("  [RAG] ===========================================")
-
-    previous_map = previous_data.get('module_strategy_map', {})
-    new_map = previous_map.copy()
-
-    for module in changes['removed_modules']:
-        if module in new_map:
-            del new_map[module]
-            logger.print(f"  [RAG]   Removed module: {module}")
-
-    for module in changes['modified_modules']:
-        if module in previous_map:
-            new_map[module] = previous_map[module]
-            logger.print(f"  [RAG]   Reused strategy for modified module '{module}': {previous_map[module]}")
-        else:
-            new_map[module] = default_strategy
-            logger.print(f"  [RAG]   Applied default strategy for modified module '{module}': {default_strategy}")
-
-    for module in changes['new_modules']:
-        new_map[module] = default_strategy
-        logger.print(f"  [RAG]   Applied default strategy for new module '{module}': {default_strategy}")
-
-    for module in changes['unchanged_modules']:
-        if module in previous_map:
-            new_map[module] = previous_map[module]
-            logger.print(f"  [RAG]   Reused strategy for unchanged module '{module}': {previous_map[module]}")
-
-    logger.print("  [RAG] ")
-    logger.print("  [RAG] --- Final Strategy Map ---")
-    for module_name, strategy in sorted(new_map.items()):
-        logger.print(f"  [RAG]   {module_name}: {strategy}")
-
-    logger.print("  [RAG] ")
-    logger.print("  [RAG] ===========================================")
-    logger.print("  [RAG] Incremental Hardening Completed")
-    logger.print("  [RAG] ===========================================")
-
-    return {
-        'module_strategy_map': new_map,
-        'reused_modules': len(changes['unchanged_modules']) + len(changes['modified_modules']),
-        'new_modules': len(changes['new_modules']),
-        'removed_modules': len(changes['removed_modules']),
-    }
-
-
-def run_incremental_hardening(
-    design_analysis: Dict[str, Any],
-    output_dir: str,
-    default_strategy: str = 'tmr',
-) -> Dict[str, Any]:
-    """Run the complete incremental hardening pipeline.
-
-    Args:
-        design_analysis: Design analysis output
-        output_dir: Output directory for incremental data
-        default_strategy: Default strategy for new modules
-
-    Returns:
-        Result dict with strategy map and change info
-    """
-    previous_data = load_incremental_data(output_dir)
-    changes = detect_design_changes(design_analysis, previous_data)
-
-    if not changes['design_changed'] and previous_data:
-        return {
-            'module_strategy_map': previous_data.get('module_strategy_map', {}),
-            'hardened_signals': previous_data.get('hardened_signals', {}),
-            'design_changed': False,
-            'reused_all': True,
+        Returns:
+            模块结构信息
+        """
+        module_info = {
+            "name": "",
+            "ports": [],
+            "signals": [],
+            "always_blocks": [],
+            "assignments": [],
         }
 
-    result = apply_incremental_hardening(design_analysis, previous_data or {}, changes, default_strategy)
+        name_match = re.search(r"\bmodule\s+(\w+)\s*\(", rtl_content)
+        if name_match:
+            module_info["name"] = name_match.group(1)
 
-    current_hash = _compute_design_hash(design_analysis)
-    save_incremental_data(
-        output_dir,
-        current_hash,
-        result['module_strategy_map'],
-        {},
-    )
+        port_pattern = r"\b(input|output|inout)\s+(\[\d+:\d+\])?\s*(\w+)"
+        ports = re.findall(port_pattern, rtl_content)
+        for direction, width, name in ports:
+            module_info["ports"].append({
+                "name": name,
+                "direction": direction,
+                "width": width.strip() if width else "1",
+            })
 
-    return {
-        'module_strategy_map': result['module_strategy_map'],
-        'design_changed': True,
-        'reused_modules': result['reused_modules'],
-        'new_modules': result['new_modules'],
-        'removed_modules': result['removed_modules'],
-    }
+        signal_pattern = r"\b(reg|wire|logic)\s+(\[\d+:\d+\])?\s*(\w+)"
+        signals = re.findall(signal_pattern, rtl_content)
+        for sig_type, width, name in signals:
+            module_info["signals"].append({
+                "name": name,
+                "type": sig_type,
+                "width": width.strip() if width else "1",
+            })
+
+        always_blocks = re.findall(r"\balways\s+@\([^)]+\)\s*begin.*?end", rtl_content, re.DOTALL)
+        module_info["always_blocks"] = len(always_blocks)
+
+        assignments = re.findall(r"\bassign\s+\w+\s*=\s*[^;]+;", rtl_content)
+        module_info["assignments"] = len(assignments)
+
+        return module_info
+
+    def _diff_modules(self, original: Dict, modified: Dict) -> Dict[str, Any]:
+        """比较两个模块的差异。
+
+        Args:
+            original: 原始模块信息
+            modified: 修改后模块信息
+
+        Returns:
+            差异信息
+        """
+        diff = {
+            "added_ports": [],
+            "removed_ports": [],
+            "modified_ports": [],
+            "added_signals": [],
+            "removed_signals": [],
+            "always_block_count_changed": False,
+            "assignment_count_changed": False,
+            "structure_changed": False,
+        }
+
+        original_ports = {p["name"]: p for p in original["ports"]}
+        modified_ports = {p["name"]: p for p in modified["ports"]}
+
+        for name, port in modified_ports.items():
+            if name not in original_ports:
+                diff["added_ports"].append(port)
+            else:
+                orig = original_ports[name]
+                if orig["direction"] != port["direction"] or orig["width"] != port["width"]:
+                    diff["modified_ports"].append((orig, port))
+
+        for name, port in original_ports.items():
+            if name not in modified_ports:
+                diff["removed_ports"].append(port)
+
+        original_signals = {s["name"] for s in original["signals"]}
+        modified_signals = {s["name"] for s in modified["signals"]}
+
+        for name in modified_signals:
+            if name not in original_signals:
+                diff["added_signals"].append(name)
+
+        for name in original_signals:
+            if name not in modified_signals:
+                diff["removed_signals"].append(name)
+
+        diff["always_block_count_changed"] = original["always_blocks"] != modified["always_blocks"]
+        diff["assignment_count_changed"] = original["assignments"] != modified["assignments"]
+
+        diff["structure_changed"] = (
+            len(diff["added_ports"]) > 0 or
+            len(diff["removed_ports"]) > 0 or
+            len(diff["modified_ports"]) > 0 or
+            diff["always_block_count_changed"] or
+            diff["assignment_count_changed"]
+        )
+
+        return diff
+
+    def incremental_update(
+        self,
+        original_rtl: str,
+        modified_rtl: str,
+        previous_hardened_rtl: str,
+    ) -> Dict[str, Any]:
+        """对已加固设计进行增量更新。
+
+        Args:
+            original_rtl: 原始 RTL 代码
+            modified_rtl: 修改后的 RTL 代码
+            previous_hardened_rtl: 之前加固后的 RTL 代码
+
+        Returns:
+            更新结果
+        """
+        original_info = self._parse_module(original_rtl)
+        modified_info = self._parse_module(modified_rtl)
+        diff = self._diff_modules(original_info, modified_info)
+
+        update_type = "incremental"
+        updated_hardened = previous_hardened_rtl
+
+        if diff["structure_changed"]:
+            update_type = "full"
+            updated_hardened = "REQUIRES_FULL_REHARDENING"
+        else:
+            for signal in diff["added_signals"]:
+                updated_hardened = re.sub(
+                    r"(endmodule)",
+                    f"    reg [7:0] {signal};\n\\1",
+                    updated_hardened,
+                )
+
+            for signal in diff["removed_signals"]:
+                updated_hardened = re.sub(
+                    rf"\b(reg|wire|logic)\s+(\[\d+:\d+\])?\s*{signal};\n?",
+                    "",
+                    updated_hardened,
+                )
+
+        result = {
+            "update_type": update_type,
+            "diff": diff,
+            "original_info": original_info,
+            "modified_info": modified_info,
+            "updated_hardened": updated_hardened,
+            "requires_full_rehardening": update_type == "full",
+        }
+
+        self._update_history.append(result)
+        return result
+
+    def validate_incremental_change(
+        self,
+        original_rtl: str,
+        modified_rtl: str,
+    ) -> Dict[str, Any]:
+        """验证增量变更的可行性。
+
+        Args:
+            original_rtl: 原始 RTL 代码
+            modified_rtl: 修改后的 RTL 代码
+
+        Returns:
+            验证结果
+        """
+        original_info = self._parse_module(original_rtl)
+        modified_info = self._parse_module(modified_rtl)
+        diff = self._diff_modules(original_info, modified_info)
+
+        validation = {
+            "is_valid": True,
+            "issues": [],
+            "warnings": [],
+            "change_summary": {},
+        }
+
+        if diff["structure_changed"]:
+            validation["is_valid"] = False
+            validation["issues"].append("模块结构发生变化，需要全量重新加固")
+
+        if len(diff["added_ports"]) > 0:
+            validation["warnings"].append(f"新增 {len(diff['added_ports'])} 个端口")
+
+        if len(diff["removed_ports"]) > 0:
+            validation["issues"].append(f"删除 {len(diff['removed_ports'])} 个端口")
+
+        if len(diff["modified_ports"]) > 0:
+            validation["issues"].append(f"修改 {len(diff['modified_ports'])} 个端口")
+
+        validation["change_summary"] = {
+            "added_ports": [p["name"] for p in diff["added_ports"]],
+            "removed_ports": [p["name"] for p in diff["removed_ports"]],
+            "modified_ports": [o["name"] for o, m in diff["modified_ports"]],
+            "added_signals": diff["added_signals"],
+            "removed_signals": diff["removed_signals"],
+            "always_blocks_changed": diff["always_block_count_changed"],
+            "assignments_changed": diff["assignment_count_changed"],
+        }
+
+        return validation
+
+    def get_update_report(self) -> Dict[str, Any]:
+        """生成更新报告。
+
+        Returns:
+            更新报告
+        """
+        report = {
+            "total_updates": len(self._update_history),
+            "incremental_updates": sum(1 for u in self._update_history if u["update_type"] == "incremental"),
+            "full_updates": sum(1 for u in self._update_history if u["update_type"] == "full"),
+            "history": self._update_history,
+        }
+
+        return report
+
+    def clear_history(self):
+        """清空更新历史。"""
+        self._update_history = []
+
+
+if __name__ == "__main__":
+    original_rtl = """
+module test_module(
+    input clk,
+    input rst,
+    input [7:0] din,
+    output [7:0] dout
+);
+    reg [7:0] buffer;
+    always @(posedge clk or posedge rst) begin
+        if (rst) buffer <= 0;
+        else buffer <= din;
+    end
+    assign dout = buffer;
+endmodule
+"""
+
+    modified_rtl = """
+module test_module(
+    input clk,
+    input rst,
+    input [7:0] din,
+    output [7:0] dout,
+    output [7:0] status
+);
+    reg [7:0] buffer;
+    reg [7:0] status_reg;
+    always @(posedge clk or posedge rst) begin
+        if (rst) buffer <= 0;
+        else buffer <= din;
+    end
+    always @(posedge clk) begin
+        status_reg <= buffer;
+    end
+    assign dout = buffer;
+    assign status = status_reg;
+endmodule
+"""
+
+    hardened_rtl = """
+module test_module_tmr(
+    input clk,
+    input rst,
+    input [7:0] din,
+    output [7:0] dout
+);
+    reg [7:0] buffer_0, buffer_1, buffer_2;
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin buffer_0 <= 0; buffer_1 <= 0; buffer_2 <= 0; end
+        else begin buffer_0 <= din; buffer_1 <= din; buffer_2 <= din; end
+    end
+    assign dout = (buffer_0 & buffer_1) | (buffer_0 & buffer_2) | (buffer_1 & buffer_2);
+endmodule
+"""
+
+    hardener = IncrementalHardener()
+
+    print("=== Validation Test ===")
+    validation = hardener.validate_incremental_change(original_rtl, modified_rtl)
+    print(f"Is valid: {validation['is_valid']}")
+    print(f"Issues: {validation['issues']}")
+    print(f"Warnings: {validation['warnings']}")
+
+    print("\n=== Incremental Update Test ===")
+    result = hardener.incremental_update(original_rtl, modified_rtl, hardened_rtl)
+    print(f"Update type: {result['update_type']}")
+    print(f"Requires full rehardening: {result['requires_full_rehardening']}")
+
+    print("\n=== Update Report ===")
+    report = hardener.get_update_report()
+    print(json.dumps(report, indent=2))
