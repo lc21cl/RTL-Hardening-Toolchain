@@ -177,3 +177,169 @@ def check_yosys_availability() -> Dict:
         result["errors"].append(f"Failed to get yosys version: {e}")
 
     return result
+
+
+def install_yosys(install_dir: Optional[str] = None) -> Dict:
+    """自动安装 yosys (oss-cad-suite)。
+
+    支持平台:
+      - Windows: 下载预编译的 oss-cad-suite zip 包
+      - Linux: 使用 apt 或下载 tar.xz
+      - macOS: 使用 brew 或下载 tar.xz
+
+    Args:
+        install_dir: 安装目录，默认使用项目根目录下的 oss-cad-suite
+
+    Returns:
+        dict: {
+            "success": bool,
+            "message": str,
+            "yosys_path": Optional[str],
+            "install_dir": Optional[str]
+        }
+    """
+    result: Dict = {
+        "success": False,
+        "message": "",
+        "yosys_path": None,
+        "install_dir": None,
+    }
+
+    if install_dir is None:
+        install_dir = os.path.join(_PROJECT_ROOT, 'oss-cad-suite')
+
+    result["install_dir"] = install_dir
+
+    try:
+        import urllib.request
+        import zipfile
+        import tarfile
+    except ImportError as e:
+        result["message"] = f"Missing required modules: {e}"
+        return result
+
+    os.makedirs(install_dir, exist_ok=True)
+
+    if sys.platform == "win32":
+        url = "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2024-02-02/oss-cad-suite-windows-x64-20240202.zip"
+        zip_path = os.path.join(install_dir, "oss-cad-suite.zip")
+        extract_dir = install_dir
+
+        try:
+            result["message"] = "Downloading oss-cad-suite for Windows..."
+            urllib.request.urlretrieve(url, zip_path)
+            result["message"] = "Extracting oss-cad-suite..."
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                zf.extractall(extract_dir)
+
+            inner_dir = os.path.join(extract_dir, 'oss-cad-suite')
+            if os.path.isdir(inner_dir):
+                for item in os.listdir(inner_dir):
+                    src = os.path.join(inner_dir, item)
+                    dst = os.path.join(extract_dir, item)
+                    if os.path.isdir(src):
+                        shutil.move(src, dst)
+                    else:
+                        shutil.copy2(src, dst)
+                shutil.rmtree(inner_dir)
+
+            yosys_exe = os.path.join(extract_dir, 'bin', 'yosys.exe')
+            if os.path.isfile(yosys_exe):
+                result["success"] = True
+                result["message"] = f"yosys installed successfully to {yosys_exe}"
+                result["yosys_path"] = yosys_exe
+                clear_yosys_cache()
+            else:
+                result["message"] = "Installation failed: yosys.exe not found after extraction"
+
+            if os.path.isfile(zip_path):
+                os.remove(zip_path)
+
+        except Exception as e:
+            result["message"] = f"Installation failed: {e}"
+
+    elif sys.platform.startswith("linux"):
+        try:
+            result["message"] = "Trying to install yosys via apt..."
+            proc = subprocess.run(
+                ["sudo", "apt-get", "update", "-y"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if proc.returncode == 0:
+                proc = subprocess.run(
+                    ["sudo", "apt-get", "install", "-y", "yosys"],
+                    capture_output=True, text=True, timeout=300,
+                )
+                if proc.returncode == 0:
+                    yosys_path = shutil.which("yosys")
+                    if yosys_path:
+                        result["success"] = True
+                        result["message"] = f"yosys installed via apt: {yosys_path}"
+                        result["yosys_path"] = yosys_path
+                        clear_yosys_cache()
+                        return result
+
+            result["message"] = "apt install failed, trying download..."
+            url = "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2024-02-02/oss-cad-suite-linux-x64-20240202.tgz"
+            tar_path = os.path.join(install_dir, "oss-cad-suite.tgz")
+
+            urllib.request.urlretrieve(url, tar_path)
+            with tarfile.open(tar_path, 'r:gz') as tf:
+                tf.extractall(install_dir)
+
+            yosys_bin = os.path.join(install_dir, 'oss-cad-suite', 'bin', 'yosys')
+            if os.path.isfile(yosys_bin):
+                os.chmod(yosys_bin, 0o755)
+                result["success"] = True
+                result["message"] = f"yosys installed to {yosys_bin}"
+                result["yosys_path"] = yosys_bin
+                clear_yosys_cache()
+
+            if os.path.isfile(tar_path):
+                os.remove(tar_path)
+
+        except Exception as e:
+            result["message"] = f"Installation failed: {e}"
+
+    elif sys.platform == "darwin":
+        try:
+            result["message"] = "Trying to install yosys via brew..."
+            proc = subprocess.run(
+                ["brew", "install", "yosys"],
+                capture_output=True, text=True, timeout=300,
+            )
+            if proc.returncode == 0:
+                yosys_path = shutil.which("yosys")
+                if yosys_path:
+                    result["success"] = True
+                    result["message"] = f"yosys installed via brew: {yosys_path}"
+                    result["yosys_path"] = yosys_path
+                    clear_yosys_cache()
+                    return result
+
+            result["message"] = "brew install failed, trying download..."
+            url = "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2024-02-02/oss-cad-suite-darwin-x64-20240202.tgz"
+            tar_path = os.path.join(install_dir, "oss-cad-suite.tgz")
+
+            urllib.request.urlretrieve(url, tar_path)
+            with tarfile.open(tar_path, 'r:gz') as tf:
+                tf.extractall(install_dir)
+
+            yosys_bin = os.path.join(install_dir, 'oss-cad-suite', 'bin', 'yosys')
+            if os.path.isfile(yosys_bin):
+                os.chmod(yosys_bin, 0o755)
+                result["success"] = True
+                result["message"] = f"yosys installed to {yosys_bin}"
+                result["yosys_path"] = yosys_bin
+                clear_yosys_cache()
+
+            if os.path.isfile(tar_path):
+                os.remove(tar_path)
+
+        except Exception as e:
+            result["message"] = f"Installation failed: {e}"
+
+    else:
+        result["message"] = f"Unsupported platform: {sys.platform}"
+
+    return result

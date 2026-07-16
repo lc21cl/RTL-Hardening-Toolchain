@@ -266,6 +266,7 @@ class PipelineLogger(logging.Logger):
 # ============================================================================
 
 _INITIALIZED_LOGGERS = set()
+_GLOBAL_CONSOLE_HANDLER = None
 
 def setup_logger(name: str = 'pipeline',
                   log_file: Optional[str] = None,
@@ -294,7 +295,6 @@ def setup_logger(name: str = 'pipeline',
 
     logger.handlers.clear()
 
-    # Parse log level
     level_map = {
         'TRACE': TRACE,
         'DEBUG': logging.DEBUG,
@@ -307,20 +307,20 @@ def setup_logger(name: str = 'pipeline',
     numeric_level = level_map.get(log_level.upper(), logging.INFO)
     logger.setLevel(numeric_level)
 
-    # Console handler
+    global _GLOBAL_CONSOLE_HANDLER
     if console_output:
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(numeric_level)
-        console_handler.setFormatter(StructuredFormatter('console'))
-        logger.addHandler(console_handler)
+        if _GLOBAL_CONSOLE_HANDLER is None:
+            _GLOBAL_CONSOLE_HANDLER = logging.StreamHandler(sys.stdout)
+            _GLOBAL_CONSOLE_HANDLER.setLevel(logging.DEBUG)
+            _GLOBAL_CONSOLE_HANDLER.setFormatter(StructuredFormatter('console'))
+        logger.addHandler(_GLOBAL_CONSOLE_HANDLER)
 
-    # File handler
     if log_file:
         os.makedirs(os.path.dirname(log_file) or '.', exist_ok=True)
         file_fmt = 'json' if json_format else 'console'
         file_handler = RotatingFileHandler(
             log_file,
-            maxBytes=10 * 1024 * 1024,  # 10MB
+            maxBytes=10 * 1024 * 1024,
             backupCount=3,
             encoding='utf-8',
         )

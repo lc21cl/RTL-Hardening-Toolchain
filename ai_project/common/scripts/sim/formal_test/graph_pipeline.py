@@ -889,15 +889,15 @@ class GraphPipeline:
             # Extract named port connections: .port_name(signal)
             connections: List[Dict] = []
             conn_pattern = re.compile(r'\.(\w+)\s*\(\s*(\w*)\s*\)')
+            last_pos = match.end()
             for cm in conn_pattern.finditer(conn_section):
                 port_name = cm.group(1)
                 signal_name = cm.group(2) if cm.group(2) else ""
-                # Calculate line number relative to the instance match
-                # conn_section is a substring of content_no_comments, so we need
-                # to find the actual position in the original content
-                conn_pos_in_full = content_no_comments.find(cm.group(0), match.end())
+                conn_str = cm.group(0)
+                conn_pos_in_full = content_no_comments.find(conn_str, last_pos)
                 if conn_pos_in_full >= 0:
                     line_no = content[:conn_pos_in_full].count('\n') + 1
+                    last_pos = conn_pos_in_full + len(conn_str)
                 else:
                     line_no = content[:match.start()].count('\n') + 1
                 connections.append({
