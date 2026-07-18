@@ -110,6 +110,24 @@ WORKFLOWS = {
     },
 }
 
+# ── 主题配置 ──
+THEMES = {
+    'light': {
+        'bg': '#ffffff', 'fg': '#000000', 'selectbg': '#0078d7',
+        'treebg': '#ffffff', 'treefg': '#000000',
+        'buttonbg': '#f0f0f0', 'entrybg': '#ffffff',
+        'frame': '#f5f5f5', 'labelfg': '#333333',
+        'notebookbg': '#ffffff', 'notebookfg': '#000000',
+    },
+    'dark': {
+        'bg': '#2d2d2d', 'fg': '#ffffff', 'selectbg': '#264f78',
+        'treebg': '#3c3c3c', 'treefg': '#ffffff',
+        'buttonbg': '#3c3c3c', 'entrybg': '#3c3c3c',
+        'frame': '#383838', 'labelfg': '#cccccc',
+        'notebookbg': '#2d2d2d', 'notebookfg': '#e0e0e0',
+    },
+}
+
 def run_python_script(script_name, args=""):
     script_path = os.path.join(SIM_FORMAL_DIR, script_name)
     if not os.path.exists(script_path):
@@ -170,6 +188,9 @@ class HardeningGUI:
         # ── 多语言支持 ──
         self.language_var = tk.StringVar(value='zh')  # 'zh' 或 'en'
         self.translations = self._load_translations()
+
+        # ── 主题切换 ──
+        self.current_theme = tk.StringVar(value='light')
 
         # ── 批量进度条 ──
         self.folder_progress_var = tk.IntVar(value=0)
@@ -496,6 +517,107 @@ class HardeningGUI:
             self.status_label_text.config(text=self.tr('status_label'))
         self.status_var.set(self.tr('status_ready'))
 
+    # ── 主题切换 ──
+    def _apply_theme(self, theme_name: str):
+        """应用亮/暗色主题到所有控件"""
+        theme = THEMES.get(theme_name, THEMES['light'])
+        style = ttk.Style(self.root)
+
+        # ttk 组件样式
+        style.configure('TFrame', background=theme['frame'])
+        style.configure('TLabel', background=theme['frame'], foreground=theme['labelfg'])
+        style.configure('TButton', background=theme['buttonbg'], foreground=theme['fg'])
+        style.configure('TEntry', fieldbackground=theme['entrybg'], foreground=theme['fg'])
+        style.configure('TNotebook', background=theme['notebookbg'], foreground=theme['notebookfg'])
+        style.configure('TNotebook.Tab', background=theme['notebookbg'], foreground=theme['notebookfg'])
+        style.configure('TLabelframe', background=theme['bg'], foreground=theme['fg'])
+        style.configure('TLabelframe.Label', background=theme['bg'], foreground=theme['labelfg'])
+        style.configure('Treeview', background=theme['treebg'], foreground=theme['treefg'],
+                         fieldbackground=theme['treebg'])
+        style.configure('Treeview.Heading', background=theme['buttonbg'], foreground=theme['fg'])
+        style.configure('TCombobox', fieldbackground=theme['entrybg'], foreground=theme['fg'])
+
+        # 工具提示用背景色
+        style.configure('Tooltip.TLabel', background='#FFFACD', foreground=theme['labelfg'])
+
+        # 自定义卡片样式
+        style.configure('Card.TFrame', background=theme['bg'], relief="raised")
+
+        # 标题 / 副标题
+        fg_title = '#1976D2' if theme_name == 'light' else '#64B5F6'
+        fg_subtitle = '#424242' if theme_name == 'light' else '#bdbdbd'
+        style.configure('Title.TLabel', font=("微软雅黑", 16, "bold"), foreground=fg_title)
+        style.configure('Subtitle.TLabel', font=("微软雅黑", 12), foreground=fg_subtitle)
+
+        # 按钮映射
+        style.map('Step.TButton',
+                  background=[('active', '#43A047'), ('!disabled', '#4CAF50')],
+                  foreground=[('!disabled', '#FFFFFF')])
+        style.map('Nav.TButton',
+                  background=[('active', '#FB8C00'), ('!disabled', '#FF9800')],
+                  foreground=[('!disabled', '#FFFFFF')])
+        style.map('Recommend.TButton',
+                  background=[('active', '#8E24AA'), ('!disabled', '#9C27B0')],
+                  foreground=[('!disabled', '#FFFFFF')])
+
+        # ── 原生 tk 控件 ──
+        self.root.configure(bg=theme['bg'])
+        palette_colors = {
+            'background': theme['bg'],
+            'foreground': theme['fg'],
+            'selectBackground': theme['selectbg'],
+            'selectForeground': '#ffffff',
+        }
+        try:
+            self.root.tk_setPalette(**palette_colors)
+        except Exception:
+            pass
+
+        # ── 遍历并更新所有现存原生 tk 控件 ──
+        def _update_widget_colors(widget):
+            widget_type = widget.winfo_class()
+            try:
+                if widget_type in ('Frame', 'LabelFrame', 'Labelframe'):
+                    widget.configure(bg=theme['frame'])
+                elif widget_type == 'Label':
+                    widget.configure(bg=theme['frame'], fg=theme['labelfg'])
+                elif widget_type == 'Button':
+                    widget.configure(bg=theme['buttonbg'], fg=theme['fg'],
+                                     activebackground=theme['selectbg'])
+                elif widget_type in ('Entry', 'Spinbox'):
+                    widget.configure(bg=theme['entrybg'], fg=theme['fg'],
+                                     insertbackground=theme['fg'])
+                elif widget_type == 'Text':
+                    widget.configure(bg=theme['entrybg'], fg=theme['fg'],
+                                     insertbackground=theme['fg'])
+                elif widget_type == 'Listbox':
+                    widget.configure(bg=theme['entrybg'], fg=theme['fg'])
+                elif widget_type == 'Canvas':
+                    widget.configure(bg=theme['bg'])
+                elif widget_type == 'Menu':
+                    widget.configure(bg=theme['bg'], fg=theme['fg'])
+                elif widget_type == 'Scrollbar':
+                    widget.configure(bg=theme['buttonbg'], troughcolor=theme['frame'])
+                elif widget_type == 'Checkbutton':
+                    widget.configure(bg=theme['frame'], fg=theme['labelfg'],
+                                     selectcolor=theme['bg'])
+                elif widget_type == 'Radiobutton':
+                    widget.configure(bg=theme['frame'], fg=theme['labelfg'],
+                                     selectcolor=theme['bg'])
+            except tk.TclError:
+                pass  # 某些控件可能不支持所有选项
+
+            try:
+                children = widget.winfo_children()
+                for child in children:
+                    _update_widget_colors(child)
+            except tk.TclError:
+                pass
+
+        _update_widget_colors(self.root)
+
+        print(f'[GUI] 主题切换为: {theme_name}')
+
     def _setup_styles(self):
         style = ttk.Style(self.root)
         style.theme_use('clam')
@@ -546,6 +668,14 @@ class HardeningGUI:
         self.lang_combo.pack()
         self.lang_combo.bind('<<ComboboxSelected>>', self._on_language_change)
 
+        # ── 主题切换下拉框 ──
+        theme_frame = ttk.Frame(self.header_frame)
+        theme_frame.pack(side=tk.RIGHT, padx=(0, 5))
+        self.theme_combo = ttk.Combobox(theme_frame, textvariable=self.current_theme,
+                                        values=['light', 'dark'], width=6, state='readonly')
+        self.theme_combo.pack()
+        self.theme_combo.bind('<<ComboboxSelected>>', lambda e: self._apply_theme(self.current_theme.get()))
+
         self.content_frame = ttk.Frame(self.main_frame)
         self.content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
@@ -565,8 +695,12 @@ class HardeningGUI:
                                  command=self._show_history, style='Nav.TButton')
         history_btn.pack(side=tk.LEFT, padx=10)
 
-        ttk.Label(self.footer_frame, text=f"RTL Hardening Tool v{VERSION}",
-                  font=("微软雅黑", 9), foreground="#666").pack(side=tk.RIGHT)
+        # ── 一键升级 ──
+        right_frame = ttk.Frame(self.footer_frame)
+        right_frame.pack(side=tk.RIGHT)
+        ttk.Label(right_frame, text=f"RTL Hardening Tool v{VERSION}",
+                  font=("微软雅黑", 9), foreground="#666").pack(side=tk.LEFT)
+        add_update_button(right_frame)
 
         self._load_env_config()
 
@@ -3471,6 +3605,110 @@ output/
 
     def run(self):
         self.root.mainloop()
+
+
+# ── 一键升级功能 ──
+import urllib.request
+import json as _json
+import re as _re
+import ssl as _ssl
+
+CHECK_UPDATE_URL = "https://api.github.com/repos/lc21cl/RTL-Hardening-Toolchain/releases/latest"
+CURRENT_VERSION = "v4.0"
+
+def check_for_updates(parent_widget=None, silent: bool = False) -> tuple:
+    """
+    检查GitHub上是否有新版本。
+
+    Args:
+        parent_widget: 父窗口，用于显示消息框。为None时只返回结果。
+        silent: 当没有更新时是否静默（不弹消息框）
+
+    Returns:
+        (has_update: bool, latest_version: str, release_url: str, download_url: str)
+    """
+    try:
+        # 创建不验证SSL的上下文（解决Windows证书问题）
+        ctx = _ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = _ssl.CERT_NONE
+
+        req = urllib.request.Request(
+            CHECK_UPDATE_URL,
+            headers={'User-Agent': 'RTL-Hardening-Tool/1.0', 'Accept': 'application/json'}
+        )
+        with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
+            data = _json.loads(resp.read().decode('utf-8'))
+
+        latest_tag = data.get('tag_name', CURRENT_VERSION)
+        release_url = data.get('html_url', CHECK_UPDATE_URL)
+
+        # 提取版本号进行比较
+        def _parse_version(v: str) -> tuple:
+            nums = _re.findall(r'(\d+)', v)
+            return tuple(int(x) for x in nums) or (0,)
+
+        has_update = _parse_version(latest_tag) > _parse_version(CURRENT_VERSION)
+
+        if has_update:
+            # 找到下载URL（zip包）
+            download_url = ""
+            for asset in data.get('assets', []):
+                name = asset.get('name', '')
+                if name.endswith('.zip') or name.endswith('.tar.gz'):
+                    download_url = asset.get('browser_download_url', '')
+                    break
+            if not download_url:
+                download_url = data.get('zipball_url', '')
+
+            msg = f"发现新版本 {latest_tag}！\n当前版本: {CURRENT_VERSION}\n\n是否前往GitHub下载？"
+            if parent_widget and hasattr(parent_widget, 'winfo_exists'):
+                from tkinter import messagebox
+                if messagebox.askyesno("发现更新", msg, parent=parent_widget):
+                    import webbrowser
+                    webbrowser.open(release_url)
+            elif not silent:
+                print(f"[UPDATE] 发现新版本: {latest_tag} (当前: {CURRENT_VERSION})")
+                print(f"[UPDATE] 下载: {release_url}")
+
+            return (True, latest_tag, release_url, download_url)
+        else:
+            if parent_widget and not silent and hasattr(parent_widget, 'winfo_exists'):
+                from tkinter import messagebox
+                messagebox.showinfo("检查更新", f"当前已是最新版本 ({CURRENT_VERSION})", parent=parent_widget)
+            return (False, CURRENT_VERSION, "", "")
+
+    except urllib.error.URLError as e:
+        if not silent:
+            print(f"[UPDATE] 网络错误: {e}")
+            if parent_widget and hasattr(parent_widget, 'winfo_exists'):
+                from tkinter import messagebox
+                messagebox.showwarning("检查更新", f"网络连接失败: {e}", parent=parent_widget)
+        return (False, CURRENT_VERSION, "", "")
+    except Exception as e:
+        if not silent:
+            print(f"[UPDATE] 检查失败: {e}")
+        return (False, CURRENT_VERSION, "", "")
+
+
+def add_update_button(parent_frame):
+    """在指定Frame上添加'检查更新'按钮和版本标签"""
+    import tkinter as tk
+    from tkinter import ttk
+
+    # 版本标签
+    ver_label = ttk.Label(parent_frame, text=f"v{CURRENT_VERSION}")
+    ver_label.pack(side=tk.LEFT, padx=5)
+
+    # 检查更新按钮
+    def _check():
+        check_for_updates(parent_widget=parent_frame.winfo_toplevel(), silent=False)
+
+    update_btn = ttk.Button(parent_frame, text="检查更新", command=_check, width=10)
+    update_btn.pack(side=tk.LEFT, padx=5)
+
+    return ver_label, update_btn
+
 
 if __name__ == "__main__":
     app = HardeningGUI()

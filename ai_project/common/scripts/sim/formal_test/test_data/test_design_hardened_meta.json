@@ -1,0 +1,20 @@
+{
+  "design": "d:\\learning\\AI_RESEARCH\\ai_project\\common\\scripts\\sim\\formal_test\\test_data\\test_design.v",
+  "output": "d:\\learning\\AI_RESEARCH\\ai_project\\common\\scripts\\sim\\formal_test\\test_data\\test_design_hardened.v",
+  "optimization_goal": "reliability",
+  "total_signals": 1,
+  "strategies": [
+    "cnt_comp"
+  ],
+  "signal_map": {
+    "count": "cnt_comp"
+  },
+  "guides": [
+    {
+      "signal": "count",
+      "strategy": "cnt_comp",
+      "width": 4,
+      "action": "\u66ff\u6362 reg [3:0] count \u2192 \u5b9e\u4f8b\u5316 cnt_comp_up"
+    }
+  ]
+}

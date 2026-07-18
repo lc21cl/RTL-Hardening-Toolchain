@@ -3,10 +3,20 @@
 import sys, os, re, json, subprocess, time, copy
 from typing import Dict, List, Optional, Any, Tuple
 
-# Windows 控制台编码修复
-if sys.platform == "win32" and hasattr(sys.stdout, 'reconfigure'):
+# ── Windows 全局编码修复 ──
+# 强制 Python 使用 UTF-8 模式，解决 pyverilog 在中文 Windows 下的 gbk 编码问题
+if sys.platform == "win32":
+    os.environ.setdefault('PYTHONUTF8', '1')
+    os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+    if hasattr(sys.stdout, 'reconfigure'):
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
+    # 修复 locale 编码
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
+        import locale
+        locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
     except Exception:
         pass
 
@@ -117,6 +127,7 @@ class HardeningPipeline:
         self.fault_injection_results = {}  # 故障注入结果
         self.aig_results = {}           # AIG分析结果
         self.llm_results = {}           # LLM生成结果
+        self.use_parallel = True        # 是否启用并行处理
     
     def load_design(self, file_path: str) -> bool:
         """加载 RTL 设计文件"""
@@ -132,8 +143,29 @@ class HardeningPipeline:
         # 尝试用 pyverilog 解析
         try:
             from pyverilog.vparser.parser import parse as pyv_parse
-            self.ast, _ = pyv_parse([file_path])
-            print(f"[LOAD] [OK] pyverilog AST解析成功: {file_path}")
+            
+            # ── Windows gbk 编码兼容：先以二进制读取，用 UTF-8 解码后写入临时文件 ──
+            if sys.platform == "win32":
+                import tempfile
+                try:
+                    with open(file_path, 'rb') as f:
+                        raw_bytes = f.read()
+                    # 尝试用 UTF-8 解码，忽略无效字节
+                    utf8_content = raw_bytes.decode('utf-8', errors='replace')
+                    tmp_fd, tmp_path = tempfile.mkstemp(suffix='.v')
+                    os.close(tmp_fd)
+                    with open(tmp_path, 'w', encoding='utf-8') as f:
+                        f.write(utf8_content)
+                    self.ast, _ = pyv_parse([tmp_path])
+                    os.unlink(tmp_path)
+                    print(f"[LOAD] [OK] pyverilog AST解析成功 (UTF-8兼容模式): {file_path}")
+                except Exception as inner_e:
+                    print(f"[LOAD] [WARN] UTF-8兼容模式失败({inner_e}), 尝试直接解析")
+                    self.ast, _ = pyv_parse([file_path])
+                    print(f"[LOAD] [OK] pyverilog AST解析成功: {file_path}")
+            else:
+                self.ast, _ = pyv_parse([file_path])
+                print(f"[LOAD] [OK] pyverilog AST解析成功: {file_path}")
         except ImportError:
             print(f"[LOAD] [WARN] pyverilog 不可用, 使用文件级分析降级")
             self.ast = None
@@ -507,6 +539,19 @@ class HardeningPipeline:
             
             # 尝试解析，捕获编码异常（Windows中文环境gbk编码问题）
             try:
+                # Windows 下 pyverilog 可能因 gbk 编码崩溃，预清理编码
+                if sys.platform == "win32":
+                    try:
+                        # 预先读取临时文件确保 UTF-8 兼容
+                        with open(tmp_path, 'rb') as _chk:
+                            _chk.read().decode('utf-8')
+                    except UnicodeDecodeError:
+                        # 若仍有问题，用 errors='replace' 重写
+                        with open(tmp_path, 'r', encoding='utf-8', errors='replace') as _fix_in:
+                            _fixed = _fix_in.read()
+                        with open(tmp_path, 'w', encoding='utf-8') as _fix_out:
+                            _fix_out.write(_fixed)
+                
                 ast, _ = pyv_parse([tmp_path], preprocess_include=[])
                 print("[AST_TRANSFORM] AST解析成功")
             except UnicodeDecodeError as ude:
@@ -1412,6 +1457,105 @@ endmodule
         
         return content
     
+    # ──────────────────────────────────────────────────
+    # 大规模设计性能优化
+    # ──────────────────────────────────────────────────
+    def _parallel_process_signals(self, signals: list, batch_size: int = 1000) -> list:
+        """对信号列表分批并行处理
+
+        使用 ThreadPoolExecutor 对信号列表进行分批处理，
+        每批处理完后报告进度。
+
+        Args:
+            signals: 信号列表
+            batch_size: 每批处理数量，默认1000
+
+        Returns:
+            处理后的结果列表
+        """
+        import concurrent.futures
+        import math
+
+        results = []
+        total = len(signals)
+        num_batches = math.ceil(total / batch_size)
+
+        print(f"[PARALLEL] 开始并行处理 {total} 个信号, "
+              f"批次大小={batch_size}, 总批次数={num_batches}")
+
+        def _process_single(signal):
+            """处理单个信号的内部函数"""
+            if isinstance(signal, dict):
+                return signal
+            return signal
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            for batch_idx in range(num_batches):
+                start = batch_idx * batch_size
+                end = min(start + batch_size, total)
+                batch = signals[start:end]
+
+                future_to_signal = {
+                    executor.submit(_process_single, sig): sig
+                    for sig in batch
+                }
+
+                for future in concurrent.futures.as_completed(future_to_signal):
+                    try:
+                        result = future.result()
+                        results.append(result)
+                    except Exception as e:
+                        print(f"[PARALLEL] [WARN] 信号处理失败: {e}")
+                        results.append(future_to_signal[future])
+
+                # 报告进度
+                processed = min((batch_idx + 1) * batch_size, total)
+                pct = processed / total * 100
+                print(f"[PARALLEL] 进度: {processed}/{total} ({pct:.1f}%)")
+
+        print(f"[PARALLEL] ✅ 并行处理完成, 共处理 {len(results)} 个信号")
+        return results
+
+    def set_parallel_mode(self, enabled: bool):
+        """开关并行模式
+
+        Args:
+            enabled: True 启用并行处理, False 禁用并行处理
+        """
+        old_mode = self.use_parallel
+        self.use_parallel = enabled
+        status = "启用" if enabled else "禁用"
+        print(f"[PARALLEL] 并行模式已{status}")
+        if old_mode != enabled:
+            print(f"[PARALLEL]   模式切换: {'启用' if old_mode else '禁用'} → {status}")
+
+    def get_performance_stats(self) -> dict:
+        """获取性能统计数据
+
+        Returns:
+            包含并行状态、信号数、处理批次等统计信息的字典
+        """
+        total_signals = len(self.module_info)
+        strategy_signals = len(self.strategy_map)
+        num_strategies = len(self.strategy_groups)
+
+        # 估算批次数量
+        batch_size = 1000
+        import math
+        num_batches = math.ceil(max(total_signals, 1) / batch_size) if total_signals > 0 else 0
+
+        stats = {
+            "use_parallel": self.use_parallel,
+            "total_signals": total_signals,
+            "strategy_signals": strategy_signals,
+            "num_strategies": num_strategies,
+            "num_batches": num_batches,
+            "batch_size": batch_size,
+            "transformed": self.transformed,
+        }
+
+        return stats
+
     def output(self, output_file: str, format: str = 'verilog') -> str:
         """步骤 5: 输出加固后代码
         

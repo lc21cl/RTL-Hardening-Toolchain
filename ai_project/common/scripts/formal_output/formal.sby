@@ -1,0 +1,15 @@
+; SymbiYosys configuration
+[options]
+mode bmc
+depth 20
+
+[engines]
+smtbmc yices2
+
+[script]
+read_verilog test_output_single\mixed_design_hardened.v
+hierarchy -check -top top
+prep -top top
+
+[files]
+test_output_single\mixed_design_hardened.v

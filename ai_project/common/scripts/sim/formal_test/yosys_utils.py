@@ -26,6 +26,8 @@ _COMMON_YOSYS_PATHS: List[str] = [
     os.path.expanduser("~/oss-cad-suite/bin/yosys"),
     "C:\\oss-cad-suite\\bin\\yosys.exe",
     "C:\\tools\\oss-cad-suite\\bin\\yosys.exe",
+    os.path.join(os.environ.get('PROGRAMFILES', 'C:\\Program Files'), 'oss-cad-suite', 'bin', 'yosys.exe'),
+    os.path.join(os.environ.get('LOCALAPPDATA', ''), 'oss-cad-suite', 'bin', 'yosys.exe'),
 ]
 
 # ── 缓存，避免重复文件系统查询 ──
@@ -179,6 +181,53 @@ def check_yosys_availability() -> Dict:
     return result
 
 
+def find_yosys_install_dir() -> Optional[str]:
+    """搜索多个可能的位置来定位 oss-cad-suite 目录。
+
+    依次检查:
+      1. 项目根目录下的 oss-cad-suite
+      2. 环境变量 OSS_CAD_SUITE 指向的目录
+      3. 常见安装位置（Program Files, LocalAppData 等）
+
+    Returns:
+        找到的 oss-cad-suite 目录路径，未找到时返回 None。
+    """
+    # 1. 项目捆绑路径
+    project_oss = os.path.join(_PROJECT_ROOT, 'oss-cad-suite')
+    if os.path.isdir(project_oss) and os.path.isfile(os.path.join(project_oss, 'bin', 'yosys.exe' if sys.platform == 'win32' else 'yosys')):
+        return os.path.abspath(project_oss)
+
+    # 2. 环境变量
+    env_dir = os.environ.get('OSS_CAD_SUITE')
+    if env_dir and os.path.isdir(env_dir):
+        return os.path.abspath(env_dir)
+
+    # 3. 常见安装路径
+    candidate_dirs = []
+    if sys.platform == 'win32':
+        pf = os.environ.get('PROGRAMFILES', 'C:\\Program Files')
+        candidate_dirs.append(os.path.join(pf, 'oss-cad-suite'))
+        pf_x86 = os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)')
+        candidate_dirs.append(os.path.join(pf_x86, 'oss-cad-suite'))
+        local = os.environ.get('LOCALAPPDATA', '')
+        if local:
+            candidate_dirs.append(os.path.join(local, 'oss-cad-suite'))
+        candidate_dirs.append('C:\\oss-cad-suite')
+        candidate_dirs.append('C:\\tools\\oss-cad-suite')
+    else:
+        candidate_dirs.extend([
+            '/opt/oss-cad-suite',
+            os.path.expanduser('~/oss-cad-suite'),
+            '/usr/local/oss-cad-suite',
+        ])
+
+    for d in candidate_dirs:
+        if os.path.isdir(d):
+            return os.path.abspath(d)
+
+    return None
+
+
 def install_yosys(install_dir: Optional[str] = None) -> Dict:
     """自动安装 yosys (oss-cad-suite)。
 
@@ -245,12 +294,50 @@ def install_yosys(install_dir: Optional[str] = None) -> Dict:
 
             yosys_exe = os.path.join(extract_dir, 'bin', 'yosys.exe')
             if os.path.isfile(yosys_exe):
-                result["success"] = True
-                result["message"] = f"yosys installed successfully to {yosys_exe}"
-                result["yosys_path"] = yosys_exe
-                clear_yosys_cache()
+                # 验证可执行文件可用
+                try:
+                    ver_proc = subprocess.run(
+                        [yosys_exe, '--version'],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    if ver_proc.returncode == 0:
+                        result["success"] = True
+                        result["message"] = f"yosys installed successfully to {yosys_exe} ({ver_proc.stdout.strip()})"
+                        result["yosys_path"] = yosys_exe
+                        clear_yosys_cache()
+                    else:
+                        result["message"] = (
+                            f"yosys.exe found but failed to execute (return code {ver_proc.returncode}): "
+                            f"{ver_proc.stderr.strip()}"
+                        )
+                except Exception as e:
+                    result["message"] = f"yosys.exe found but execution verification failed: {e}"
             else:
-                result["message"] = "Installation failed: yosys.exe not found after extraction"
+                # 搜索 install_dir 下所有 yosys.exe 的位置
+                found_exe = []
+                for root, dirs, files in os.walk(extract_dir):
+                    for f in files:
+                        if f.lower() == 'yosys.exe':
+                            found_exe.append(os.path.join(root, f))
+                # 收集目录结构（前两层）用于诊断
+                dir_structure = []
+                try:
+                    for item in sorted(os.listdir(extract_dir)):
+                        item_path = os.path.join(extract_dir, item)
+                        if os.path.isdir(item_path):
+                            subs = [s for s in sorted(os.listdir(item_path))[:5]]
+                            dir_structure.append(f"{item}/ ({', '.join(subs)})" if subs else f"{item}/")
+                        else:
+                            dir_structure.append(item)
+                except Exception:
+                    dir_structure.append("<unable to list directory>")
+
+                result["message"] = (
+                    f"Installation failed: yosys.exe not found after extraction.\n"
+                    f"  Searched in: {extract_dir}\n"
+                    f"  yosys.exe files found: {found_exe if found_exe else 'None'}\n"
+                    f"  Directory structure:\n    " + "\n    ".join(dir_structure)
+                )
 
             if os.path.isfile(zip_path):
                 os.remove(zip_path)
@@ -343,3 +430,15 @@ def install_yosys(install_dir: Optional[str] = None) -> Dict:
         result["message"] = f"Unsupported platform: {sys.platform}"
 
     return result
+
+
+if __name__ == '__main__':
+    result = check_yosys_availability()
+    print(f"Yosys available: {result['available']}")
+    print(f"Path: {result['path']}")
+    print(f"Version: {result['version']}")
+    if not result['available']:
+        ans = input("Yosys not found. Install now? (y/n): ")
+        if ans.lower() == 'y':
+            install_result = install_yosys()
+            print(f"Install result: {install_result}")

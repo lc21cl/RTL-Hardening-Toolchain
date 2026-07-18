@@ -400,3 +400,201 @@ def visualize_hardening_effect(
         'json_path': json_path,
         'html_path': html_path,
     }
+
+
+# ======================================================================
+# Matplotlib charting utilities (radar & trend charts)
+# ======================================================================
+
+try:
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Polygon
+    from matplotlib.spines import Spine
+    from matplotlib.path import Path
+    import numpy as np
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+
+_CHART_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'output', 'charts')
+
+
+def _ensure_chart_dir():
+    """Create the chart output directory if it does not exist."""
+    if not os.path.exists(_CHART_DIR):
+        os.makedirs(_CHART_DIR, exist_ok=True)
+
+
+def _sanitize_filename(title: str) -> str:
+    """Convert a title string to a safe filename."""
+    safe = ''.join(c if c.isalnum() or c in (' ', '_', '-') else '_' for c in title)
+    return safe.replace(' ', '_').lower()
+
+
+def plot_radar_chart(metrics: dict, title: str = "Hardening Effect Radar") -> str:
+    """Plot a radar chart for the given metrics dict.
+
+    The dict should contain exactly 5 keys representing the dimensions:
+    e.g. {"面积开销": 3.0, "延迟开销": 1, "可靠性得分": 5, "策略多样性": 4, "覆盖率": 0.85}
+
+    Args:
+        metrics: A dictionary of dimension -> value.
+        title:  Chart title.
+
+    Returns:
+        Saved PNG file path, or None on failure.
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        print("[WARNING] matplotlib is not installed. Unable to plot radar chart.")
+        return None
+
+    try:
+        _ensure_chart_dir()
+
+        labels = list(metrics.keys())
+        values = list(metrics.values())
+        num_vars = len(labels)
+
+        # Compute angle for each axis and close the loop
+        angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+        values += values[:1]
+        angles += angles[:1]
+
+        fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True))
+        ax.fill(angles, values, alpha=0.3)
+        ax.plot(angles, values, linewidth=2)
+
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(labels, fontsize=12)
+        ax.set_ylim(0, max(values) * 1.15 if max(values) > 0 else 1)
+        ax.set_title(title, fontsize=16, pad=20)
+
+        plt.tight_layout()
+
+        _ensure_chart_dir()
+        safe_name = _sanitize_filename(title) + '.png'
+        save_path = os.path.join(_CHART_DIR, safe_name)
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        return save_path
+
+    except Exception as e:
+        print(f"[ERROR] Failed to plot radar chart: {e}")
+        return None
+
+
+def plot_trend_chart(history_data: list, title: str = "Hardening Effect Trend") -> str:
+    """Plot a trend line chart from history data.
+
+    Each element in history_data should be a dict like:
+        {"timestamp": "2026-07-18", "area": 3.0, "reliability": 5, "latency": 1}
+
+    Args:
+        history_data: List of data points with timestamp and metric keys.
+        title:        Chart title.
+
+    Returns:
+        Saved PNG file path, or None on failure.
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        print("[WARNING] matplotlib is not installed. Unable to plot trend chart.")
+        return None
+
+    try:
+        _ensure_chart_dir()
+
+        timestamps = [d['timestamp'] for d in history_data]
+        area_values = [d.get('area', 0) for d in history_data]
+        reliability_values = [d.get('reliability', 0) for d in history_data]
+        latency_values = [d.get('latency', 0) for d in history_data]
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        x = range(len(timestamps))
+        ax.plot(x, area_values, marker='o', label='Area', linewidth=2)
+        ax.plot(x, reliability_values, marker='s', label='Reliability', linewidth=2)
+        ax.plot(x, latency_values, marker='^', label='Latency', linewidth=2)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(timestamps, fontsize=10)
+        plt.xticks(rotation=45, ha='right')
+        ax.set_xlabel('Timestamp', fontsize=12)
+        ax.set_ylabel('Value', fontsize=12)
+        ax.set_title(title, fontsize=16)
+        ax.legend(fontsize=12)
+        ax.grid(True, linestyle='--', alpha=0.6)
+
+        plt.tight_layout()
+
+        safe_name = _sanitize_filename(title) + '.png'
+        save_path = os.path.join(_CHART_DIR, safe_name)
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        return save_path
+
+    except Exception as e:
+        print(f"[ERROR] Failed to plot trend chart: {e}")
+        return None
+
+
+def plot_multi_radar_comparison(records: list, title: str = "Multi-Design Comparison") -> str:
+    """Overlay multiple radar charts on the same axes for comparison.
+
+    Each record in records is a metrics dict with the same keys, e.g.:
+        {"面积开销": 3.0, "延迟开销": 1, "可靠性得分": 5, "策略多样性": 4, "覆盖率": 0.85}
+
+    Args:
+        records: A list of metrics dicts.
+        title:   Chart title.
+
+    Returns:
+        Saved PNG file path, or None on failure.
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        print("[WARNING] matplotlib is not installed. Unable to plot multi-radar comparison.")
+        return None
+
+    try:
+        _ensure_chart_dir()
+
+        if not records:
+            print("[ERROR] Empty records list provided for multi-radar comparison.")
+            return None
+
+        labels = list(records[0].keys())
+        num_vars = len(labels)
+        angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+        angles += angles[:1]
+
+        colors = ['#2196F3', '#FF5722', '#4CAF50', '#9C27B0', '#FFC107', '#00BCD4']
+
+        fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True))
+
+        for i, rec in enumerate(records):
+            values = list(rec.values())
+            values += values[:1]
+            color = colors[i % len(colors)]
+            ax.fill(angles, values, alpha=0.08, color=color)
+            ax.plot(angles, values, linewidth=2, color=color, label=f'Design {i + 1}')
+
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(labels, fontsize=12)
+
+        all_values = [v for rec in records for v in rec.values()]
+        ax.set_ylim(0, max(all_values) * 1.15 if max(all_values) > 0 else 1)
+        ax.set_title(title, fontsize=16, pad=20)
+        ax.legend(fontsize=11, loc='upper right', bbox_to_anchor=(1.3, 1.0))
+
+        plt.tight_layout()
+
+        safe_name = _sanitize_filename(title) + '.png'
+        save_path = os.path.join(_CHART_DIR, safe_name)
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        return save_path
+
+    except Exception as e:
+        print(f"[ERROR] Failed to plot multi-radar comparison: {e}")
+        return None

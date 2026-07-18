@@ -1,0 +1,15 @@
+; SymbiYosys configuration
+[options]
+mode bmc
+depth 20
+
+[engines]
+smtbmc yices2
+
+[script]
+read_verilog d:\learning\AI_RESEARCH\ai_project\common\scripts\sim\formal_test\test_data\test_design.v
+hierarchy -check -top top
+prep -top top
+
+[files]
+d:\learning\AI_RESEARCH\ai_project\common\scripts\sim\formal_test\test_data\test_design.v

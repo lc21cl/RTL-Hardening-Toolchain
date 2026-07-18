@@ -5,27 +5,64 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.9', '3.10', '3.11']
+      fail-fast: false
+    
+    runs-on: ${{ matrix.os }}
+    
     steps:
       - uses: actions/checkout@v3
       
-      - name: Setup Python
+      - name: Setup Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: ${{ matrix.python-version }}
       
-      - name: Install dependencies
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y yosys iverilog
-          pip install -r ai_project/common/scripts/requirements.txt
-          pip install pyverilog flask numpy
       
-      - name: Run unit tests
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install matplotlib openai python-dotenv
+          pip install pyverilog flask numpy networkx
+      
+      - name: Run workflow tests
         run: |
           cd ai_project/common/scripts
-          python -m pytest test_incremental_hardening.py -v --tb=short 2>/dev/null || python test_incremental_hardening.py
           python test_workflow.py
+      
+      - name: Run incremental hardening tests
+        run: |
+          cd ai_project/common/scripts
+          python test_incremental_hardening.py
+      
+      - name: Run performance benchmark
+        run: |
+          cd ai_project/common/scripts
+          python test_performance.py
+      
+      - name: Run GUI import test
+        run: |
+          cd ai_project/common/scripts
+          python test_gui.py
+      
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-outputs-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: |
+            ai_project/common/scripts/test_output_*/
+            ai_project/common/scripts/output/
+          retention-days: 7
