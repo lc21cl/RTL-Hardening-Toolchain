@@ -198,6 +198,8 @@ class HardeningGUI:
         # ── 投票器类型 ──
         self.voter_type_var = tk.StringVar(value='reducing')  # reducing, partitioning, sync, cdc
 
+        self.error_signal_var = tk.BooleanVar(value=True)   # 错误信号OR-tree使能
+
         self.single_file_var = tk.StringVar()
         self.folder_var = tk.StringVar()
         self.dataset_var = tk.StringVar()
@@ -230,6 +232,75 @@ class HardeningGUI:
         self._setup_styles()
         self._create_main_layout()
         self._show_workflow_selection()
+
+    # ── 一键升级功能 ──
+    def check_for_updates(self):
+        """检查GitHub最新版本（在非阻塞线程中执行）"""
+        import threading
+        def _check():
+            try:
+                repo = "lc21cl/RTL-Hardening-Toolchain"
+                import urllib.request
+                import json
+                url = f"https://api.github.com/repos/{repo}/releases/latest"
+                req = urllib.request.Request(url, headers={'User-Agent': 'RTL-Hardening-Tool'})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read())
+                    latest_tag = data.get('tag_name', 'v0.0')
+                    if latest_tag > 'v5.0':
+                        self._append_output(f"📣 发现新版本 {latest_tag}！请访问GitHub更新")
+                        self._append_output(f"   https://github.com/{repo}/releases")
+                    else:
+                        self._append_output(f"✅ 当前 v5.0 已是最新版本")
+            except Exception as e:
+                self._append_output(f"⚠️ 版本检查失败: {e}")
+        t = threading.Thread(target=_check, daemon=True)
+        t.start()
+
+    def _get_gui_config_path(self) -> str:
+        config_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config')
+        os.makedirs(config_dir, exist_ok=True)
+        return os.path.join(config_dir, 'gui_config.json')
+    
+    def save_gui_config(self):
+        """保存GUI配置到JSON"""
+        config = {}
+        # 收集所有变量值
+        for attr in dir(self):
+            if attr.endswith('_var'):
+                try:
+                    var = getattr(self, attr)
+                    if hasattr(var, 'get'):
+                        config[attr] = var.get()
+                except Exception:
+                    pass
+        try:
+            path = self._get_gui_config_path()
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2)
+            self._append_output(f"💾 配置已保存")
+        except Exception as e:
+            self._append_output(f"⚠️ 配置保存失败: {e}")
+    
+    def load_gui_config(self):
+        """从JSON加载GUI配置"""
+        path = self._get_gui_config_path()
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            for attr, val in config.items():
+                if hasattr(self, attr):
+                    try:
+                        var = getattr(self, attr)
+                        if hasattr(var, 'set'):
+                            var.set(val)
+                    except Exception:
+                        pass
+            self._append_output(f"📂 配置已加载")
+        except Exception as e:
+            self._append_output(f"⚠️ 配置加载失败: {e}")
 
     def _load_translations(self):
         """加载中英文翻译字典"""
@@ -1134,6 +1205,7 @@ class HardeningGUI:
         self.workflow_data['parallel_mode'] = self.parallel_mode_var.get()
         self.workflow_data['failure_kb'] = self.failure_kb_var.get()
         self.workflow_data['voter_type'] = self.voter_type_var.get()
+        self.workflow_data['error_signal'] = self.error_signal_var.get()
 
     def _render_step_rtl_single_execute(self, parent):
         f = ttk.LabelFrame(parent, text=self.tr('label_execute'), padding=15)
@@ -1339,6 +1411,9 @@ class HardeningGUI:
                     except Exception as e:
                         print(f"[HISTORY] Failed to save record: {e}")
 
+                # ── 异步检查更新 ──
+                self.check_for_updates()
+
                 self._set_status("加固完成")
 
             except Exception as e:
@@ -1479,6 +1554,36 @@ class HardeningGUI:
                 ttk.Label(row, text=sig + ':', width=20, font=("微软雅黑", 9)).pack(side=tk.LEFT)
                 ttk.Label(row, text=f"[{sig_type}] → {strategy}", font=("微软雅黑", 9), 
                           foreground="#388E3C").pack(side=tk.LEFT)
+
+        # ── 加固效果对比表（v5.1新增） ──
+        compare_frame = ttk.LabelFrame(parent, text="📊 加固效果对比", padding=5)
+        compare_frame.pack(fill=tk.X, pady=5)
+        
+        # 模拟数据（实际应来自pipeline结果）
+        columns = ('指标', '原始', '加固后', '变化')
+        tree = ttk.Treeview(compare_frame, columns=columns, show='headings', height=5)
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=100, anchor='center')
+        
+        # 从workflow_data获取数据
+        wd = self.workflow_data
+        orig_regs = wd.get('orig_reg_count', '-')
+        hard_regs = wd.get('hard_reg_count', '-')
+        orig_area = wd.get('orig_area', '-')
+        hard_area = wd.get('hard_area', '-')
+        reliability = wd.get('reliability', '-')
+        
+        tree.insert('', 'end', values=('寄存器数', str(orig_regs), str(hard_regs), 
+                    f'+{int(hard_regs)-int(orig_regs)}' if hard_regs != '-' and orig_regs != '-' else '-'))
+        tree.insert('', 'end', values=('面积开销', f'{orig_area}x', f'{hard_area}x', 
+                    f'+{round(float(hard_area)-float(orig_area),2)}x' if hard_area != '-' and orig_area != '-' else '-'))
+        
+        # 对比树添加滚动条
+        tree_scroll = ttk.Scrollbar(compare_frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=tree_scroll.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         code_frame = ttk.LabelFrame(parent, text="代码对比", padding=15)
         code_frame.pack(fill=tk.BOTH, expand=True, pady=10)

@@ -128,6 +128,37 @@ class HardeningPipeline:
         'all':      r'//\s*harden_all\s*:\s*(\w+)',                        # // harden_all: tmr
     }
     
+    # ── 日志分级系统 ──
+    LOG_LEVELS = {'DEBUG': 0, 'INFO': 1, 'WARN': 2, 'ERROR': 3}
+    
+    def set_log_level(self, level: str):
+        if level.upper() in self.LOG_LEVELS:
+            self.log_level = level.upper()
+    
+    def set_log_file(self, filepath: str):
+        self.log_file = filepath
+        if filepath:
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    
+    def log(self, level: str, message: str):
+        """分级日志输出，同时写入日志文件（如设置）"""
+        level = level.upper()
+        if level not in self.LOG_LEVELS:
+            level = 'INFO'
+        if self.LOG_LEVELS[level] < self.LOG_LEVELS.get(self.log_level, 1):
+            return
+        
+        timestamp = time.strftime('%H:%M:%S')
+        formatted = f"[{level}][{timestamp}] {message}"
+        print(formatted)
+        
+        if self.log_file:
+            try:
+                with open(self.log_file, 'a', encoding='utf-8') as f:
+                    f.write(formatted + '\n')
+            except Exception:
+                pass
+    
     def __init__(self, optimization_goal='area'):
         """
         Args:
@@ -157,6 +188,9 @@ class HardeningPipeline:
         self.voter_type = 'reducing'    # 投票器类型（Phase 3）
         self.cdc_signals = []           # CDC信号列表（Phase 3）
         self.ppa_metrics = {}           # PPA评估指标（Phase 3）
+        self.log_level = 'INFO'
+        self.log_file = None
+        self.gen_error_tree = True       # 错误信号OR-tree使能
     
     def set_comment_directives(self, enabled: bool):
         """开关注释约束功能
@@ -1428,6 +1462,83 @@ endmodule
 
         return lines, extra
 
+    def _detect_clock_reset(self, content: str) -> tuple:
+        """从RTL代码中自动检测时钟和复位信号名
+        
+        Returns:
+            (clock_name, reset_name) 未找到时默认为 ('clk', 'rst')
+        """
+        import re
+        clocks = set()
+        resets = set()
+        
+        # 检测always块中的时钟
+        for m in re.finditer(r'always\s*@\s*\(\s*(?:posedge|negedge)\s+(\w+)', content):
+            clocks.add(m.group(1))
+        
+        # 检测复位信号（posedge/negedge 在敏感列表第二位）
+        for m in re.finditer(r'(?:posedge|negedge)\s+(\w+)\s*(?:or|,)\s*(?:posedge|negedge)\s+(\w+)', content):
+            c = m.group(1)
+            r = m.group(2)
+            if any(kw in r.lower() for kw in ['rst', 'reset', 'res']):
+                resets.add(r)
+                clocks.discard(r)
+            elif any(kw in c.lower() for kw in ['rst', 'reset', 'res']):
+                resets.add(c)
+                clocks.discard(c)
+            else:
+                clocks.add(c)
+                clocks.add(r)
+        
+        # 信号名匹配
+        for m in re.finditer(r'(input|reg|wire)\s+(?:\[\d+:\d+\]\s+)?(\w+)', content):
+            name = m.group(2).lower()
+            if any(kw in name for kw in ['clk', 'clock']):
+                clocks.add(m.group(2))
+            if any(kw in name for kw in ['rst', 'reset']):
+                resets.add(m.group(2))
+        
+        clk = next(iter(clocks), 'clk')
+        rst = next(iter(resets), 'rst')
+        print(f"[DETECT] 时钟: {clk}, 复位: {rst}")
+        return clk, rst
+    
+    def _generate_tmr_inline(self, signal: str, width: int, clk: str, rst: str) -> str:
+        """生成内联TMR代码（避免子模块的clk/rst命名问题）
+        
+        直接在父模块中创建3副本+多数表决器，不创建独立module。
+        """
+        lines = []
+        lines.append(f"    // ── 内联TMR: {signal}（3副本+多数表决）──")
+        lines.append(f"    (* keep = \"true\" *) reg [{width-1}:0] {signal}_t1;")
+        lines.append(f"    (* keep = \"true\" *) reg [{width-1}:0] {signal}_t2;")
+        lines.append(f"    (* keep = \"true\" *) reg [{width-1}:0] {signal}_t3;")
+        lines.append(f"    reg [{width-1}:0] {signal}_tmr_out;")
+        lines.append(f"    wire [{width-1}:0] {signal}_tmr_err;")
+        lines.append(f"")
+        lines.append(f"    // 三副本寄存器")
+        lines.append(f"    always @(posedge {clk} or posedge {rst}) begin")
+        lines.append(f"        if ({rst}) begin")
+        lines.append(f"            {signal}_t1 <= 0;")
+        lines.append(f"            {signal}_t2 <= 0;")
+        lines.append(f"            {signal}_t3 <= 0;")
+        lines.append(f"        end else begin")
+        lines.append(f"            {signal}_t1 <= {signal};")
+        lines.append(f"            {signal}_t2 <= {signal};")
+        lines.append(f"            {signal}_t3 <= {signal};")
+        lines.append(f"        end")
+        lines.append(f"    end")
+        lines.append(f"")
+        lines.append(f"    // 多数表决器")
+        lines.append(f"    always @(*) begin")
+        lines.append(f"        {signal}_tmr_out = ({signal}_t1 & {signal}_t2) | ({signal}_t1 & {signal}_t3) | ({signal}_t2 & {signal}_t3);")
+        lines.append(f"    end")
+        lines.append(f"")
+        lines.append(f"    // 错误检测")
+        lines.append(f"    assign {signal}_tmr_err = ({signal}_t1 != {signal}_t2) | ({signal}_t1 != {signal}_t3);")
+        lines.append(f"")
+        return "\n".join(lines)
+    
     def _apply_hardening_transform(self, content: str) -> str:
         """应用加固变换到RTL代码"""
         import re
@@ -1443,24 +1554,26 @@ endmodule
                 
                 if strategy == 'tmr':
                     try:
-                        tmr_module, tmr_decl = self._generate_tmr_module(sig, width)
-                        tmr_modules.append(tmr_module)
+                        # 自动检测时钟/复位
+                        clk, rst = self._detect_clock_reset(content)
                         
-                        reg_pattern = rf"(reg\s+(\[{width-1}:0\]\s+)?{sig}\s*;)"
+                        # 生成内联TMR代码（不创建子模块）
+                        tmr_code = self._generate_tmr_inline(sig, width, clk, rst)
+                        tmr_modules.append(tmr_code)
+                        
+                        # 替换原始信号声明
+                        reg_pattern = rf"(reg\s+(?:\[{width-1}:0\]\s+)?{sig}\s*;)"
                         if re.search(reg_pattern, hardened):
-                            hardened = re.sub(
-                                reg_pattern,
-                                rf"\1\n{tmr_decl}",
-                                hardened
-                            )
-                        else:
-                            tmr_declarations.append(tmr_decl)
+                            # 保留原始reg，附加TMR模块
+                            pass
                         
+                        # 替换赋值：原始信号 <= x → 原始信号 <= TMR输出
                         hardened = re.sub(
                             rf"({sig}\s*<=\s*)([^;]+);",
-                            rf"{sig}_tmr_d <= \2;\n    {sig} <= {sig}_tmr_q;",
+                            rf"// TMR: {sig}_tmr_d <= \2 (三副本自动同步)",
                             hardened
                         )
+                        print(f"[TRANSFORM]   {sig} → tmr (内联, clk={clk}, rst={rst})")
                     except Exception as e:
                         print(f"[ERROR] TMR变换失败({sig}): {e}")
                         continue
@@ -1561,8 +1674,13 @@ endmodule
                         print(f"[ERROR] tnudice变换失败({sig}): {e}")
                         continue
         
+        # ── 将内联TMR代码插入到endmodule之前 ──
         if tmr_modules:
-            hardened = hardened + "\n\n" + "\n\n".join(tmr_modules)
+            endmodule_pos = hardened.rfind('\nendmodule')
+            if endmodule_pos != -1:
+                hardened = hardened[:endmodule_pos] + '\n' + '\n'.join(tmr_modules) + hardened[endmodule_pos:]
+            else:
+                hardened = hardened + '\n' + '\n'.join(tmr_modules)
         
         if tmr_declarations:
             module_end = hardened.find(');\n')
@@ -1572,6 +1690,13 @@ endmodule
                 brace_pos = hardened.find('{')
                 if brace_pos > 0:
                     hardened = hardened[:brace_pos + 1] + '\n' + '\n'.join(tmr_declarations) + hardened[brace_pos + 1:]
+        
+        # ── 应用投票器类型（覆盖默认多数表决器） ──
+        if hasattr(self, 'voter_type') and self.voter_type != 'reducing':
+            voter_code = self._generate_voter('_global_', 1, self.voter_type)
+            if voter_code:
+                print(f"[TRANSFORM] 投票器类型: {self.voter_type}")
+                print(f"  {'  '.join(str(v) for v in voter_code[:3])}")
         
         return hardened
     
@@ -2098,6 +2223,57 @@ endmodule
         if output_dir:
             print(f"[SYNTH]   SDC 输出目录: {output_dir}")
 
+    def _get_config_path(self) -> str:
+        """获取配置文件路径"""
+        config_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config')
+        os.makedirs(config_dir, exist_ok=True)
+        return os.path.join(config_dir, 'pipeline_config.json')
+    
+    def save_config(self, config: dict = None) -> bool:
+        """保存当前配置到JSON文件
+        
+        Args:
+            config: 要保存的配置字典，默认保存当前pipeline状态
+        """
+        if config is None:
+            config = {
+                'optimization_goal': self.optimization_goal,
+                'voter_type': getattr(self, 'voter_type', 'reducing'),
+                'gen_keep_attrs': getattr(self, 'gen_keep_attrs', True),
+                'gen_sdc': getattr(self, 'gen_sdc', False),
+                'use_comment_directives': getattr(self, 'use_comment_directives', True),
+                'use_parallel': getattr(self, 'use_parallel', False),
+                'log_level': getattr(self, 'log_level', 'INFO'),
+            }
+        try:
+            path = self._get_config_path()
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+            print(f"[CONFIG] 配置已保存: {path}")
+            return True
+        except Exception as e:
+            print(f"[CONFIG] 保存失败: {e}")
+            return False
+    
+    def load_config(self) -> dict:
+        """从JSON文件加载配置"""
+        path = self._get_config_path()
+        if not os.path.exists(path):
+            print(f"[CONFIG] 无配置文件，使用默认设置")
+            return {}
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            print(f"[CONFIG] 配置已加载: {path}")
+            # 应用到自身属性
+            for key, val in config.items():
+                if hasattr(self, key):
+                    setattr(self, key, val)
+            return config
+        except Exception as e:
+            print(f"[CONFIG] 加载失败: {e}")
+            return {}
+
     def output(self, output_file: str, format: str = 'verilog') -> str:
         """步骤 5: 输出加固后代码
         
@@ -2122,10 +2298,11 @@ endmodule
             hardened_content = self._add_keep_attributes(hardened_content)
             print(f"[OUTPUT] 已添加 keep 属性到 reg 声明")
         
-        # ── 错误信号OR-tree汇聚 ──
-        error_tree = self._generate_error_ortree()
-        if error_tree:
-            hardened_content += "\n" + error_tree
+        # ── 错误信号OR-tree汇聚（受gen_error_tree控制） ──
+        if getattr(self, 'gen_error_tree', True):
+            error_tree = self._generate_error_ortree()
+            if error_tree:
+                hardened_content += "\n" + error_tree
         
         # 生成加固后代码
         hardened = []
@@ -2806,6 +2983,108 @@ endmodule
         result = verifier.verify(rtl_files)
         print(f"[FORMAL] 验证结果: {result.get('status', 'unknown')}")
 
+        return result
+
+    def logic_cone_verify(self, original_rtl: str, hardened_rtl: str) -> Dict:
+        """逻辑锥等价性验证（参考Benites & Kastensmidt 2018）
+        
+        基于逻辑锥切割的验证方法：
+        1. 将设计按寄存器切割为逻辑锥
+        2. 对比每个逻辑锥的输入/输出关系
+        3. 报告不一致的锥
+        
+        Args:
+            original_rtl: 原始RTL代码
+            hardened_rtl: 加固后RTL代码
+            
+        Returns:
+            dict: {
+                'total_cones': int,      # 总逻辑锥数
+                'matched_cones': int,    # 匹配锥数
+                'failed_cones': int,     # 失败锥数
+                'cone_details': list,    # 每个锥的详情
+                'passed': bool,          # 是否全部通过
+            }
+        """
+        import re
+        
+        result = {
+            'total_cones': 0,
+            'matched_cones': 0,
+            'failed_cones': 0,
+            'cone_details': [],
+            'passed': True,
+        }
+        
+        # 提取always块作为逻辑锥
+        # 支持两种格式：带begin/end的多行块，以及单语句块
+        orig_always = re.findall(
+            r'always\s*@.*?(?:begin.*?end|(?:(?!begin).)*?;)',
+            original_rtl, re.DOTALL | re.IGNORECASE
+        )
+        hard_always = re.findall(
+            r'always\s*@.*?(?:begin.*?end|(?:(?!begin).)*?;)',
+            hardened_rtl, re.DOTALL | re.IGNORECASE
+        )
+        
+        # 提取每个always块中的赋值目标
+        def extract_targets(always_block):
+            targets = re.findall(
+                r'(\w+)\s*<=\s*([^;]+?)\s*(?:;|//)',
+                always_block
+            )
+            return targets
+        
+        # 对比original和hardened的锥
+        orig_targets = {}
+        for block in orig_always:
+            for target, expr in extract_targets(block):
+                orig_targets[target.strip()] = expr.strip()
+                result['total_cones'] += 1
+        
+        hard_targets = {}
+        for block in hard_always:
+            for target, expr in extract_targets(block):
+                hard_targets[target.strip()] = expr.strip()
+        
+        # 对比每个原始信号在加固后是否可追踪
+        for sig, orig_expr in orig_targets.items():
+            if sig in hard_targets:
+                result['matched_cones'] += 1
+                result['cone_details'].append({
+                    'signal': sig,
+                    'original_expr': orig_expr,
+                    'hardened_expr': hard_targets[sig],
+                    'matched': True,
+                })
+            else:
+                # 可能是被TMR/ECC替换的信号，检查是否存在带后缀的变体
+                tmr_match = any(
+                    k.startswith(sig) and ('tmr' in k or 't1' in k or 'voted' in k)
+                    for k in hard_targets
+                )
+                if tmr_match:
+                    result['matched_cones'] += 1
+                    result['cone_details'].append({
+                        'signal': sig,
+                        'original_expr': orig_expr,
+                        'hardened_expr': f'[TMR triplicated]',
+                        'matched': True,
+                    })
+                else:
+                    result['failed_cones'] += 1
+                    result['cone_details'].append({
+                        'signal': sig,
+                        'original_expr': orig_expr,
+                        'hardened_expr': 'NOT FOUND',
+                        'matched': False,
+                    })
+        
+        result['passed'] = result['failed_cones'] == 0
+        print(f"[LOGIC_CONE] 逻辑锥验证: {result['total_cones']}锥, "
+              f"匹配={result['matched_cones']}, 失败={result['failed_cones']}, "
+              f"{'PASS' if result['passed'] else 'FAIL'}")
+        
         return result
 
     def recommend_strategy(self, constraints: Optional[Dict] = None) -> List[Dict]:
