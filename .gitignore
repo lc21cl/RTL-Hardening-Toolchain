@@ -34,12 +34,17 @@ data/models/
 # Training data
 gpu_training_package/
 
+# Large datasets
+expanded_rtlcoder_10k.jsonl
+
 # Generated files
 *.blif
 *.aig
 *.ys
 output/
 temp/
+test_output_*/
+*.output
 *.log
 
 # Debug
@@ -59,6 +64,7 @@ oss-cad-suite.exe
 第五周汇报/
 第四周汇报/
 项目方案/
+第二周调研汇报/
 
 # Generated parser files
 parser.out

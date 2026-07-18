@@ -48,7 +48,7 @@ class FaultInjector:
         """
         registers = []
         for rtl_file in self.rtl_files:
-            with open(rtl_file, 'r') as f:
+            with open(rtl_file, 'r', encoding='utf-8') as f:
                 content = f.read()
 
             # 匹配 reg 声明: reg [msb:lsb] name; 或 reg name;

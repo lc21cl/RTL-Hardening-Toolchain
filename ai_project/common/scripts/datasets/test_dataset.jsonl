@@ -1,0 +1,1 @@
+{"id": "test_counter", "name": "Test Counter", "verilog": "module counter(input clk, input rst, output reg [7:0] count);\nalways @(posedge clk or posedge rst)\n    if (rst) count <= 0;\n    else count <= count + 1;\nendmodule"}

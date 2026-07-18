@@ -45,7 +45,7 @@ for priority, name, search, replace in fixer._FIX_PATTERNS:
 
 # Now test with the actual complex file
 complex_file = os.path.join(os.path.dirname(__file__), "test_complex_repair.v")
-with open(complex_file, 'r') as f:
+with open(complex_file, 'r', encoding='utf-8') as f:
     complex_content = f.read()
 
 print(f"\n--- Testing with complex file ({len(complex_content)} chars) ---")

@@ -1,0 +1,31 @@
+name: RTL Hardening Tool CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y yosys iverilog
+          pip install -r ai_project/common/scripts/requirements.txt
+          pip install pyverilog flask numpy
+      
+      - name: Run unit tests
+        run: |
+          cd ai_project/common/scripts
+          python -m pytest test_incremental_hardening.py -v --tb=short 2>/dev/null || python test_incremental_hardening.py
+          python test_workflow.py

@@ -1791,7 +1791,7 @@ class RAGEngine:
 
         try:
             if self.kb_path and os.path.isfile(self.kb_path):
-                with open(self.kb_path, 'r') as f:
+                with open(self.kb_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 self.kb = KnowledgeBase.from_dict(data)
                 logger.info(f"[RAG] Knowledge base loaded from: {self.kb_path}")

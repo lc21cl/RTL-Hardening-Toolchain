@@ -114,12 +114,18 @@ def analyze_aig(aig_path: str):
 
 
 if __name__ == "__main__":
-    # 默认使用 test_mock_data/synth_output.aig
     default_path = os.path.normpath(
         os.path.join(os.path.dirname(__file__),
                      "..", "..", "test_mock_data", "synth_output.aig")
     )
+    alt_path = os.path.normpath(
+        os.path.join(os.path.dirname(__file__),
+                     "..", "..", "test_mock_data", "output.aig")
+    )
     aig_path = sys.argv[1] if len(sys.argv) > 1 else default_path
+    
+    if not os.path.isfile(aig_path) and os.path.isfile(alt_path):
+        aig_path = alt_path
 
     if not os.path.isfile(aig_path):
         print(f"[错误] AIG 文件不存在: {aig_path}")

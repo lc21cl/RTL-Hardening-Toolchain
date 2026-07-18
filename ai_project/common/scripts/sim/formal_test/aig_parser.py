@@ -298,7 +298,7 @@ class AIGParser:
             print(f"警告: 映射文件不存在 — {map_path}", file=sys.stderr)
             return
 
-        with open(map_path, 'r') as f:
+        with open(map_path, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith('#'):

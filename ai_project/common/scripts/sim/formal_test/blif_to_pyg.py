@@ -47,7 +47,7 @@ class BlifParser:
 
     # ------------------------------------------------------------------
     def _parse(self):
-        with open(self.path, 'r') as f:
+        with open(self.path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
 
         # Strip comments (lines starting with #) and blank lines

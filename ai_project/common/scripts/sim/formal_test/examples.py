@@ -184,7 +184,7 @@ def example_incremental_hardening(original_file, modified_file, previous_hardene
     pipeline = HardeningPipeline()
     pipeline.load_design(original_file)
 
-    with open(modified_file, 'r') as f:
+    with open(modified_file, 'r', encoding='utf-8') as f:
         modified_rtl = f.read()
 
     result = pipeline.incremental_update(modified_rtl, previous_hardened)
@@ -253,10 +253,16 @@ def example_strategy_recommendation(input_file):
     for i, rec in enumerate(recommendations, 1):
         print(f"\n   {i}. {rec['strategy']}")
         print(f"      得分: {rec['score']:.2f}")
-        print(f"      面积开销: {rec['metrics']['area_overhead']}")
-        print(f"      功耗开销: {rec['metrics']['power_overhead']}")
-        print(f"      可靠性: {rec['metrics']['reliability']}")
-        print(f"      延迟: {rec['metrics']['latency']}")
+        if 'metrics' in rec:
+            print(f"      面积开销: {rec['metrics']['area_overhead']}")
+            print(f"      功耗开销: {rec['metrics']['power_overhead']}")
+            print(f"      可靠性: {rec['metrics']['reliability']}")
+            print(f"      延迟: {rec['metrics']['latency']}")
+        else:
+            print(f"      面积开销: {rec.get('area_overhead', 'N/A')}")
+            print(f"      功耗开销: {rec.get('power_overhead', 'N/A')}")
+            print(f"      可靠性: {rec.get('reliability', 'N/A')}")
+            print(f"      延迟: {rec.get('latency', 'N/A')}")
 
     print(f"\n✅ 策略推荐完成")
 
@@ -327,17 +333,28 @@ def example_fault_injection(rtl_file):
         from fault_injection import FaultInjector
 
         injector = FaultInjector()
-        result = injector.inject(rtl_file, fault_type='SEU', count=10)
-
-        print(f"\n📊 故障注入结果:")
-        print(f"   注入故障数: {result.get('injected', 0)}")
-        print(f"   检测到故障: {result.get('detected', 0)}")
-        print(f"   未检测到故障: {result.get('undetected', 0)}")
-        print(f"   覆盖率: {result.get('coverage', 0) * 100:.1f}%")
+        
+        with open(rtl_file, 'r', encoding='utf-8') as f:
+            rtl_content = f.read()
+        
+        registers = injector._extract_registers(rtl_content)
+        print(f"\n📁 提取到 {len(registers)} 个寄存器:")
+        for reg in registers[:5]:
+            print(f"   - {reg}")
+        
+        if registers:
+            result = injector.inject_seu(rtl_content, registers[0], 0)
+            print(f"\n📊 SEU 故障注入结果:")
+            print(f"   故障类型: {result.get('fault_type', 'unknown')}")
+            print(f"   目标节点: {result.get('node_name', 'unknown')}")
+            print(f"   位位置: {result.get('bit_position', 'unknown')}")
+            print(f"   状态: {result.get('status', 'unknown')}")
 
         print(f"\n✅ 故障注入测试完成")
     except ImportError:
         print("❌ 故障注入模块不可用")
+    except Exception as e:
+        print(f"❌ 故障注入测试失败: {e}")
 
 
 def run_all_examples():

@@ -210,43 +210,51 @@ class StrategyAutoSelector:
             return 0.0
 
         score = 0.0
+        goal = constraints.get("goal", "balanced")
 
         area_budget = constraints.get("area_budget", float("inf"))
         if info["area_overhead"] <= area_budget:
-            score += 30
-        else:
-            score += max(0, 30 - (info["area_overhead"] - area_budget) * 10)
-
-        power_budget = constraints.get("power_budget", float("inf"))
-        if info["power_overhead"] <= power_budget:
             score += 20
         else:
-            score += max(0, 20 - (info["power_overhead"] - power_budget) * 10)
+            score += max(0, 20 - (info["area_overhead"] - area_budget) * 10)
 
         reliability_requirement = constraints.get("reliability_requirement", 0)
         if info["reliability"] >= reliability_requirement:
-            score += 30
+            score += 20
         else:
             score += info["reliability"] * 5
 
-        latency_budget = constraints.get("latency_budget", float("inf"))
-        if info["latency"] <= latency_budget:
-            score += 10
-        else:
-            score += max(0, 10 - (info["latency"] - latency_budget) * 5)
-
         design_type = design_features.get("design_type", "")
-        if design_type in info["best_for"]:
-            score += 10
+        best_for_list = info["best_for"]
+        
+        match_count = 0
+        if design_type in best_for_list:
+            match_count += 3
+        if design_features.get("has_memory") and "memory" in best_for_list:
+            match_count += 2
+        if design_features.get("has_fsm") and "state_machine" in best_for_list:
+            match_count += 2
+        if design_features.get("has_counter") and "counter" in best_for_list:
+            match_count += 2
+        if design_features.get("has_counter") and "timer" in best_for_list:
+            match_count += 1
+        if design_features.get("has_fsm") and "controller" in best_for_list:
+            match_count += 1
+        if design_features.get("has_memory") and "storage" in best_for_list:
+            match_count += 1
 
-        if design_features.get("has_memory") and "memory" in info["best_for"]:
-            score += 5
-        if design_features.get("has_fsm") and "state_machine" in info["best_for"]:
-            score += 5
-        if design_features.get("has_counter") and "counter" in info["best_for"]:
-            score += 5
+        score += match_count * 8
 
-        return score
+        if goal == "area":
+            score -= info["area_overhead"] * 5
+        elif goal == "reliability":
+            score += info["reliability"] * 5
+        elif goal == "performance":
+            score -= info["latency"] * 10
+
+        score += (5 - info["reliability"]) * 2
+
+        return min(100, max(0, score))
 
     def recommend(
         self,

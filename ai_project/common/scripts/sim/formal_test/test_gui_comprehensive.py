@@ -240,7 +240,7 @@ def test_incremental_hardening():
         assert os.path.exists(incremental_file), "增量数据文件未生成"
         print(f"[GUI_TEST] 增量数据文件已生成: {incremental_file}")
         
-        with open(incremental_file, 'r') as f:
+        with open(incremental_file, 'r', encoding='utf-8') as f:
             saved_data = json.load(f)
         assert 'design_hash' in saved_data, "缺少 design_hash"
         assert 'module_strategy_map' in saved_data, "保存的数据缺少 module_strategy_map"

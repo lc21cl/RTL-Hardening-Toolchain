@@ -136,7 +136,14 @@ class ReliabilityAnalyzer:
         total_avf = 0.0
         node_count = 0
 
-        for node_name, node_data in vulnerability_results.items():
+        if isinstance(vulnerability_results, dict):
+            items = vulnerability_results.items()
+        elif isinstance(vulnerability_results, list):
+            items = [(str(i), item) for i, item in enumerate(vulnerability_results)]
+        else:
+            items = []
+
+        for node_name, node_data in items:
             if isinstance(node_data, dict):
                 score = node_data.get("vulnerability_score", 0)
                 avf = self._calculate_avf(score)

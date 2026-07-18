@@ -3,7 +3,7 @@
   "dataset_version": "1.0",
   "format": "sft",
   "num_samples": 3,
-  "created_at": "2026-07-16T09:07:44.184333",
+  "created_at": "2026-07-16T10:54:32.257818",
   "samples": [
     {
       "id": "39d3006384545ffd",
@@ -12,7 +12,7 @@
       "output": "module simple_reg_tmr(\n    input clk,\n    input rst,\n    input [7:0] din,\n    output reg [7:0] dout\n);\n    wire [7:0] dout_A, dout_B, dout_C;\n\n    simple_reg inst_A(.clk(clk), .rst(rst), .din(din), .dout(dout_A));\n    simple_reg inst_B(.clk(clk), .rst(rst), .din(din), .dout(dout_B));\n    simple_reg inst_C(.clk(clk), .rst(rst), .din(din), .dout(dout_C));\n\n    majority_voter_8bit voter(\n        .A(dout_A),\n        .B(dout_B),\n        .C(dout_C),\n        .Z(dout)\n    );\nendmodule",
       "strategy": "tmr",
       "metadata": {
-        "timestamp": "2026-07-16T09:07:44.184321",
+        "timestamp": "2026-07-16T10:54:32.257807",
         "strategy": "tmr",
         "example": true,
         "index": 0
@@ -25,7 +25,7 @@
       "output": "module simple_reg_tmr(\n    input clk,\n    input rst,\n    input [7:0] din,\n    output reg [7:0] dout\n);\n    wire [7:0] dout_A, dout_B, dout_C;\n\n    simple_reg inst_A(.clk(clk), .rst(rst), .din(din), .dout(dout_A));\n    simple_reg inst_B(.clk(clk), .rst(rst), .din(din), .dout(dout_B));\n    simple_reg inst_C(.clk(clk), .rst(rst), .din(din), .dout(dout_C));\n\n    majority_voter_8bit voter(\n        .A(dout_A),\n        .B(dout_B),\n        .C(dout_C),\n        .Z(dout)\n    );\nendmodule",
       "strategy": "tmr",
       "metadata": {
-        "timestamp": "2026-07-16T09:07:44.184327",
+        "timestamp": "2026-07-16T10:54:32.257812",
         "strategy": "tmr",
         "example": true,
         "index": 1
@@ -38,7 +38,7 @@
       "output": "module simple_reg_tmr(\n    input clk,\n    input rst,\n    input [7:0] din,\n    output reg [7:0] dout\n);\n    wire [7:0] dout_A, dout_B, dout_C;\n\n    simple_reg inst_A(.clk(clk), .rst(rst), .din(din), .dout(dout_A));\n    simple_reg inst_B(.clk(clk), .rst(rst), .din(din), .dout(dout_B));\n    simple_reg inst_C(.clk(clk), .rst(rst), .din(din), .dout(dout_C));\n\n    majority_voter_8bit voter(\n        .A(dout_A),\n        .B(dout_B),\n        .C(dout_C),\n        .Z(dout)\n    );\nendmodule",
       "strategy": "tmr",
       "metadata": {
-        "timestamp": "2026-07-16T09:07:44.184330",
+        "timestamp": "2026-07-16T10:54:32.257816",
         "strategy": "tmr",
         "example": true,
         "index": 2

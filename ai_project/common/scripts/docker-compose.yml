@@ -1,0 +1,17 @@
+version: '3.8'
+services:
+  rtl-hardening-tool:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"    # Web GUI
+      - "6080:6080"    # VNC (可选)
+    volumes:
+      - ./output:/app/output
+      - ./datasets:/app/datasets
+      - ./models:/app/models
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - TZ=Asia/Shanghai

@@ -2,45 +2,82 @@
   "design": "test_mock_data/mixed_design.v",
   "output": "test_mock_data/mixed_design_hardened.v",
   "optimization_goal": "area",
-  "total_signals": 6,
+  "total_signals": 10,
   "strategies": [
-    "cnt_comp",
-    "parity",
-    "tmr",
-    "tmr_state"
+    "parity"
   ],
   "signal_map": {
-    "cycle_count": "cnt_comp",
+    "result": "parity",
+    "done": "parity",
+    "cycle_count": "parity",
     "config_reg": "parity",
     "mode_select": "parity",
-    "acc_reg": "tmr",
-    "tmp_reg": "tmr",
-    "state": "tmr_state"
+    "acc_reg": "parity",
+    "tmp_reg": "parity",
+    "state": "parity",
+    "clk": "parity",
+    "data_in": "parity"
   },
   "guides": [
     {
+      "signal": "result",
+      "strategy": "parity",
+      "width": 32,
+      "action": "添加 parity_result 奇偶位 + result_error_flag"
+    },
+    {
+      "signal": "done",
+      "strategy": "parity",
+      "width": 1,
+      "action": "添加 parity_done 奇偶位 + done_error_flag"
+    },
+    {
       "signal": "cycle_count",
-      "strategy": "cnt_comp",
+      "strategy": "parity",
       "width": 16,
-      "action": "\u66ff\u6362 reg [15:0] cycle_count \u2192 \u5b9e\u4f8b\u5316 cnt_comp_up"
+      "action": "添加 parity_cycle_count 奇偶位 + cycle_count_error_flag"
     },
     {
       "signal": "config_reg",
       "strategy": "parity",
       "width": 8,
-      "action": "\u6dfb\u52a0 parity_config_reg \u5947\u5076\u4f4d + config_reg_error_flag"
+      "action": "添加 parity_config_reg 奇偶位 + config_reg_error_flag"
     },
     {
       "signal": "mode_select",
       "strategy": "parity",
       "width": 1,
-      "action": "\u6dfb\u52a0 parity_mode_select \u5947\u5076\u4f4d + mode_select_error_flag"
+      "action": "添加 parity_mode_select 奇偶位 + mode_select_error_flag"
+    },
+    {
+      "signal": "acc_reg",
+      "strategy": "parity",
+      "width": 32,
+      "action": "添加 parity_acc_reg 奇偶位 + acc_reg_error_flag"
+    },
+    {
+      "signal": "tmp_reg",
+      "strategy": "parity",
+      "width": 32,
+      "action": "添加 parity_tmp_reg 奇偶位 + tmp_reg_error_flag"
     },
     {
       "signal": "state",
-      "strategy": "tmr_state",
+      "strategy": "parity",
       "width": 2,
-      "action": "\u66ff\u6362 reg [1:0] state \u2192 3 \u526f\u672c + \u591a\u6570\u8868\u51b3\u5668 + fsm_error"
+      "action": "添加 parity_state 奇偶位 + state_error_flag"
+    },
+    {
+      "signal": "clk",
+      "strategy": "parity",
+      "width": 1,
+      "action": "添加 parity_clk 奇偶位 + clk_error_flag"
+    },
+    {
+      "signal": "data_in",
+      "strategy": "parity",
+      "width": 32,
+      "action": "添加 parity_data_in 奇偶位 + data_in_error_flag"
     }
   ]
 }
