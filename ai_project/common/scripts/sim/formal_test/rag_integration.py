@@ -1922,11 +1922,102 @@ class RAGEngine:
         # Failure knowledge base for recording and warning about past failures
         self.failure_kb = FailureKnowledgeBase()
 
+        # 双知识库 (FT-Pilot 2026)
+        self.semantic_kb = {}    # 语义知识库: 策略描述/适用场景
+        self.example_kb = {}     # 示例知识库: 代码模板/实例
+        # 初始化语义知识库
+        self._init_semantic_kb()
+        # 初始化示例知识库
+        self._init_example_kb()
+
         # Initialize the LLM backend immediately
         self.set_llm_backend(llm_backend, api_key=api_key, model=model)
 
         logger.info(f"[RAG] Engine created (backend={llm_backend}, "
                     f"kb_path={kb_path or 'default'})")
+
+    def _init_semantic_kb(self):
+        """初始化语义知识库 (FT-Pilot)
+        
+        包含策略描述、适用场景、优缺点
+        """
+        self.semantic_kb = {
+            'tmr': {
+                'description': '三模冗余：将寄存器复制3份，通过多数表决器输出',
+                'scenario': '关键数据通路、状态寄存器',
+                'overhead': '3.0x面积/2.5x功耗',
+                'protection': '可纠正任意单点SEU',
+            },
+            'ecc': {
+                'description': '纠错码：使用汉明码实现单纠双检',
+                'scenario': '存储器、宽位数据总线',
+                'overhead': '1.4x面积',
+                'protection': '单比特纠正/双比特检测',
+            },
+            'parity': {
+                'description': '奇偶校验：添加奇数/偶数校验位',
+                'scenario': '控制寄存器、配置寄存器',
+                'overhead': '0.03x面积',
+                'protection': '奇偶错误检测（无纠正）',
+            },
+            'dice': {
+                'description': 'DICE存储单元：4节点交叉耦合结构',
+                'scenario': '高可靠性存储单元',
+                'overhead': '2.5x面积',
+                'protection': '双节点翻转恢复（DNURL变体）',
+            },
+        }
+    
+    def _init_example_kb(self):
+        """初始化示例知识库 (FT-Pilot)
+        
+        包含高质加固代码模板/实例
+        """
+        self.example_kb = {
+            'tmr_simple': '''// TMR模板: 3副本+多数表决
+reg [W-1:0] sig_t1, sig_t2, sig_t3;
+always @(posedge clk) begin
+    sig_t1 <= d; sig_t2 <= d; sig_t3 <= d;
+end
+assign sig_voted = (sig_t1 & sig_t2) | (sig_t2 & sig_t3) | (sig_t1 & sig_t3);''',
+            'parity_simple': '''// 奇偶校验模板
+reg [W:0] parity_reg;  // W位数据+1位校验
+always @(posedge clk) begin
+    parity_reg <= {d, ^d};  // 数据拼接偶校验位
+end
+assign data_out = parity_reg[W-1:0];
+assign err_flag = ^parity_reg;  // 奇偶校验检测''',
+        }
+    
+    def retrieve_knowledge(self, query: str, top_k: int = 2) -> dict:
+        """双知识库检索 (FT-Pilot)
+        
+        从语义库和示例库分别检索相关知识。
+        
+        Args:
+            query: 查询字符串（策略名或场景描述）
+            top_k: 返回结果数
+            
+        Returns:
+            {'semantic': dict, 'examples': [str]}
+        """
+        # 语义检索：精确匹配+模糊匹配
+        semantic_result = {}
+        for key, val in self.semantic_kb.items():
+            if key in query.lower() or query.lower() in key:
+                semantic_result[key] = val
+        
+        # 示例检索：按策略名匹配
+        examples = []
+        for key, val in self.example_kb.items():
+            for sig_key in semantic_result:
+                if sig_key in key:
+                    examples.append(val)
+        
+        return {
+            'semantic': semantic_result,
+            'examples': examples[:top_k],
+        }
 
     # ------------------------------------------------------------------
     # Initialization

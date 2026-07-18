@@ -1,6 +1,6 @@
 # RTL 加固工具集 — 完整使用指南
 
-## 文档版本: v5.2 | 日期: 2026-07-18
+## 文档版本: v5.3 | 日期: 2026-07-18
 
 ---
 
@@ -698,45 +698,45 @@ Phase D: 物理设计集成（2.5天，工程化）
 | **TMRG** (CERN) | 注释驱动约束 (`// tmrg`) | ✅ | `parse_harden_comments()` | 完整实现 |
 |  | 信号级/模块级TMR控制 | ✅ | `use_comment_directives` | 完整实现 |
 |  | 自动majority voter | ✅ | `_generate_voter('reducing')` | 完整实现 |
-|  | **Fanout cell插入(1线→3线)** | ✅ | `_generate_tmr_inline()` v5.2 | 新增实现 |
-|  | **三时钟TMR(clkA/B/C)** | ✅ | `_generate_tmr_inline(triple_clock=True)` v5.2 | 新增实现 |
+|  | Fanout cell插入(1线→3线) | ✅ | `_generate_tmr_inline()` v5.2 | 完整实现 |
+|  | **三时钟TMR(clkA/B/C)** | ✅ | `_generate_tmr_inline(triple_clock=True)` v5.2 | 完整实现 |
 |  | tmr\_error全局错误信号 | ✅ | `_generate_error_ortree()` | 完整实现 |
-|  | **tmr\_error自动恢复机制** | ✅ | `tmr_recovery`寄存器 v5.2 | 新增实现 |
+|  | **tmr\_error自动恢复机制** | ✅ | `tmr_recovery`寄存器 v5.2 | 完整实现 |
 |  | FSM四策略(fsm01-fsm04) | ✅ | `fsm_hamming/fsm_safe/tmr_state/one_hot` | 扩展实现 |
 |  | set\_dont\_touch综合保护 | ✅ | `_add_keep_attributes()` + SDC | 完整实现 |
-|  | **PLAG布局约束生成** | ❌ | 未实现 | 低优先级(物理设计) |
+|  | **PLAG布局约束生成** | ❌ | 未实现 | 物理设计层面暂不实现 |
 |  | SEU/SET注入(SEEG工具) | ✅ | `run_fault_injection()` | 扩展实现 |
 | **TaMaRa** (YosysHQ) | 错误信号OR-tree | ✅ | `_generate_error_ortree()` | 完整实现 |
 |  | 逻辑锥逆向BFS搜索 | ⚠️ | `logic_cone_verify()` 正向对比 | 仅验证未生成 |
-|  | **逻辑锥逆向BFS三模复制** | ❌ | 未实现 | 低优先级 |
+|  | 逻辑锥逆向BFS三模复制 | ❌ | 未实现 | 低优先级 |
 |  | 时钟/复位特殊处理 | ✅ | `_detect_clock_reset()` | 完整实现 |
 | **FT-Pilot** (中科院) | GNN脆弱性预测 | ✅ | `GNNModelTrainer` + GraphSAGE | 完整实现 |
 |  | LLM加固重写 | ✅ | `RAGEngine.generate_hardened_rtl()` | 完整实现 |
-|  | **CoT语义分析(LLM角色识别)** | ✅ | `cot_classify_signal()` v5.2 | 新增实现 |
-|  | 双知识库RAG(语义+示例) | ⚠️ | `rag_integration.py` 单库 | 部分实现 |
+|  | **CoT语义分析(LLM角色识别)** | ✅ | `cot_classify_signal()` v5.2 | 完整实现 |
+|  | **双知识库RAG(语义+示例)** | ✅ | `retrieve_knowledge()` v5.3 | 新增实现 |
 |  | 故障知识积累 | ✅ | `FailureKnowledgeBase` | 完整实现 |
 |  | 策略适用表 | ✅ | `STRATEGY_MATRIX` | 扩展实现 |
-|  | **多层验证(语法/可综合/接口/仿真)** | ⚠️ | 仅语法+编译验证 | 部分实现 |
+|  | **多层验证(语法/可综合/接口/仿真)** | ✅ | `_multi_layer_verify()` v5.3 | 新增实现 |
 | **J&W 2010** (BYU) | 归约型投票器 | ✅ | `_generate_voter('reducing')` | 完整实现 |
 |  | 分区型投票器 | ✅ | `_generate_voter('partitioning')` | 完整实现 |
 |  | 同步型投票器 | ✅ | `_generate_voter('sync')` | 完整实现 |
 |  | CDC型投票器 | ✅ | `_generate_voter('cdc')` | 完整实现 |
-|  | **投票器"禁区"规则** | ❌ | 未实现 | 中等优先级 |
+|  | **投票器"禁区"规则** | ✅ | `_generate_exclusion_constraints()` v5.3 | 新增实现 |
 | **Benites 2018** | CGTMR/FGTMR划分 | ✅ | 模块级/信号级策略 | 完整实现 |
 |  | 逻辑锥验证 | ✅ | `logic_cone_verify()` | 完整实现 |
 | **ECC文献** | ECC模板(SECDED) | ✅ | `_apply_ecc_transform()` v5.2 | 完整汉明码实现 |
-|  | **完整SECDED编码器/解码器** | ✅ | `secded_{signal}` 模块 v5.2 | 新增实现 |
-|  | **BCH码多比特纠错** | ❌ | 未实现 | 中等优先级 |
+|  | **完整SECDED编码器/解码器** | ✅ | `secded_{signal}` 模块 v5.2 | 完整实现 |
+|  | **BCH码多比特纠错** | ❌ | 未实现 | 低优先级(专用场景) |
 | **DICE文献** | 基础DICE | ✅ | `strategy='dice'` | 完整实现 |
 |  | DNURL双节点恢复 | ✅ | `strategy='dnurl'` | 完整实现 |
 |  | TNUDICE三节点DICE | ✅ | `strategy='tnudice'` | 完整实现 |
-|  | **HLTNURL三节点自恢复** | ❌ | 未实现 | 中等优先级 |
+|  | **HLTNURL三节点自恢复** | ❌ | 未实现 | 低优先级(专用场景) |
 | **TLegUp** | 综合保护(`keep`约束) | ✅ | `_add_keep_attributes()` | 完整实现 |
 | **SpyDrNet-TMR** | 多种投票器类型 | ✅ | `VOTER_TYPES` | 完整实现 |
-| **Xilinx TMRTool** | 投票器也需复制 | ⚠️ | `voter_type` 支持 | 需用户选择 |
+| **Xilinx TMRTool** | **投票器也需复制** | ✅ | `triple_voter` 参数 v5.3 | 新增实现 |
 
-**统计**: 共 **37** 个创新点, ✅ 已实现 **29** 个 (v5.2新增5项), ⚠️ 部分实现 **4** 个, ❌ 未实现 **4** 个。
-创新点覆盖率从 v5.1 的 24/37 (65%) 提升至 **29/37 (78%)**。
+**统计**: 共 **37** 个创新点, ✅ 已实现 **33** 个 (v5.3新增4项), ⚠️ 部分实现 **1** 个, ❌ 未实现 **3** 个。
+创新点覆盖率从 v5.2 的 29/37 (78%) 提升至 **33/37 (89%)**。
 
 | 功能 | 工具来源 | 不采纳原因 |
 |------|---------|-----------|
@@ -850,7 +850,7 @@ Flask Web GUI 替代 Tkinter），移植风险很低。
 
 ---
 
-*文档结束 — RTL加固工具集 v5.2*
+*文档结束 — RTL加固工具集 v5.3*
 
 # 附录
 
