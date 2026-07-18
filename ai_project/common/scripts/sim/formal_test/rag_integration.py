@@ -1765,6 +1765,9 @@ class RAGEngine:
         # Context cache to avoid redundant retrievals
         self._context_cache: Dict[str, str] = {}
 
+        # Failure knowledge base for recording and warning about past failures
+        self.failure_kb = FailureKnowledgeBase()
+
         # Initialize the LLM backend immediately
         self.set_llm_backend(llm_backend, api_key=api_key, model=model)
 
@@ -1979,7 +1982,8 @@ class RAGEngine:
         return final_context
 
     def _build_prompt(self, context: str,
-                      design_info: Dict[str, Any]) -> str:
+                      design_info: Dict[str, Any],
+                      failure_warnings: str = "") -> str:
         """Build the full structured prompt for the LLM.
 
         Combines the system prompt, retrieved context, and design information
@@ -1993,6 +1997,8 @@ class RAGEngine:
                          - signal_width (int): Data signal width
                          - vulnerabilities (str, optional): Description of
                            vulnerabilities found.
+            failure_warnings: Optional failure knowledge warnings string
+                              to inject into the prompt.
 
         Returns:
             Complete prompt string ready for LLM inference.
@@ -2014,6 +2020,8 @@ class RAGEngine:
         logger.print(f"  [RAG PRM] Signals ({n_signals}): {signals_str[:120]}")
         logger.print(f"  [RAG PRM] Signal width: {signal_width}")
         logger.print(f"  [RAG PRM] Context length: {len(context)} chars")
+        if failure_warnings:
+            logger.print(f"  [RAG PRM] Failure warnings injected: {len(failure_warnings)} chars")
 
         user_prompt = HARDENING_USER_PROMPT_TEMPLATE.format(
             design_name=design_name,
@@ -2022,6 +2030,10 @@ class RAGEngine:
             vulnerabilities=vulnerabilities,
             patterns_context=context,
         )
+
+        # Inject failure knowledge warnings at the end of the prompt
+        if failure_warnings:
+            user_prompt += f"\n\n---\n{failure_warnings}"
 
         full_prompt = (
             f"System: {HARDENING_SYSTEM_PROMPT}\n\n"
@@ -2091,10 +2103,11 @@ class RAGEngine:
         if len(context) < 50:
             logger.warning(f"  [RAG]   Short context ({len(context)} chars) — may produce poor RTL")
 
-        # ── Step 3: Build prompt ──
+        # ── Step 3: Build prompt with failure knowledge injection ──
         logger.print(f"\n  [RAG] Phase 3/4: Prompt Construction")
         _t4 = time.time()
-        prompt = self._build_prompt(context, design_info)
+        failure_warnings = self.failure_kb.get_all_warnings()
+        prompt = self._build_prompt(context, design_info, failure_warnings=failure_warnings)
         _t5 = time.time()
         logger.print(f"  [RAG]   prompt building: {_t5-_t4:.3f}s, "
                      f"system={len(HARDENING_SYSTEM_PROMPT)} chars, "
@@ -2145,6 +2158,17 @@ class RAGEngine:
             logger.error(f"[RAG] {error_msg}")
             import traceback
             logger.error(f"[RAG] Traceback: {traceback.format_exc()}")
+
+            # Record failure in the failure knowledge base
+            strategy = design_info.get('strategy_override', 'unknown')
+            design_name = design_info.get('module_name', '')
+            self.failure_kb.record_failure(
+                strategy=strategy,
+                error_type='compilation_error',
+                error_msg=error_msg,
+                design_name=design_name,
+            )
+
             return error_msg
 
 
@@ -3976,6 +4000,108 @@ def resolve_compatibility_conflicts(
         logger.error("[RAG] Interface compatibility not available")
         return {'module_strategy_map': module_strategy_map, 'conflicts': []}
     return _ifc_resolve_compatibility_conflicts(design_analysis, module_strategy_map, resolution_strategy)
+
+
+# ============================================================================
+# Failure Knowledge Base
+# ============================================================================
+
+class FailureKnowledgeBase:
+    """故障知识积累库（参考FT-Pilot的失败知识积累机制）
+
+    记录LLM加固生成的历史失败案例，后续生成时注入警告信息，
+    避免重复犯同样的错误。
+    """
+
+    def __init__(self, storage_path: str = None):
+        self.storage_path = storage_path or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            '..', '..', 'output', 'failure_knowledge.json'
+        )
+        dir_path = os.path.dirname(self.storage_path)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
+        self.failures = self._load()
+        print(f"[FAILURE_KB] Loaded {len(self.failures)} failure records")
+
+    def _load(self) -> list:
+        if os.path.exists(self.storage_path):
+            try:
+                with open(self.storage_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"[FAILURE_KB] Load error: {e}")
+        return []
+
+    def _save(self):
+        with open(self.storage_path, 'w', encoding='utf-8') as f:
+            json.dump(self.failures, f, indent=2, ensure_ascii=False)
+
+    def record_failure(self, strategy: str, error_type: str, error_msg: str,
+                       design_name: str = "", rtl_snippet: str = ""):
+        """记录一次加固失败
+
+        Args:
+            strategy: 使用的加固策略名 (如 'tmr', 'ecc')
+            error_type: 错误类型分类 ('syntax_error' | 'interface_error' | 'functional_error' | 'compilation_error')
+            error_msg: 错误描述
+            design_name: 设计名称
+            rtl_snippet: 出问题的RTL代码片段
+        """
+        record = {
+            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'strategy': strategy,
+            'error_type': error_type,
+            'error_msg': error_msg[:500],
+            'design_name': design_name,
+            'rtl_snippet': rtl_snippet[:300],
+        }
+        self.failures.append(record)
+        if len(self.failures) > 200:
+            self.failures = self.failures[-200:]
+        self._save()
+        print(f"[FAILURE_KB] Recorded: {strategy}/{error_type}")
+
+    def get_warnings(self, strategy: str, max_warnings: int = 3) -> list:
+        """获取指定策略的历史失败警告
+
+        Args:
+            strategy: 策略名
+            max_warnings: 最多返回的警告数
+
+        Returns:
+            警告列表，每条包含 error_type 和 error_msg
+        """
+        relevant = [f for f in self.failures if f['strategy'] == strategy]
+        return relevant[-max_warnings:]
+
+    def get_all_warnings(self, max_per_strategy: int = 2) -> str:
+        """获取所有策略的失败警告摘要（用于LLM prompt注入）
+
+        Returns:
+            格式化的警告字符串
+        """
+        by_strategy = {}
+        for f in self.failures:
+            s = f['strategy']
+            if s not in by_strategy:
+                by_strategy[s] = []
+            by_strategy[s].append(f)
+
+        lines = []
+        for strategy, fails in sorted(by_strategy.items()):
+            recent = fails[-max_per_strategy:]
+            for f in recent:
+                lines.append(f"  [{strategy}] {f['error_type']}: {f['error_msg'][:100]}")
+
+        if not lines:
+            return ""
+        return "已知失败模式（请避免重复）:\n" + "\n".join(lines)
+
+    def clear(self):
+        self.failures.clear()
+        self._save()
+        print(f"[FAILURE_KB] Cleared all records")
 
 
 # 如果直接运行此脚本，执行层次化提取测试

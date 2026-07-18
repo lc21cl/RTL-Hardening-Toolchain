@@ -108,6 +108,14 @@ class HardeningPipeline:
         'watchdog':  "看门狗: 超时检测 (0.5×)",
     }
     
+    # 注释驱动加固指令格式定义
+    COMMENT_DIRECTIVES = {
+        'strategy': r'//\s*harden_strategy\s*:\s*(\w+(?:\s*,\s*\w+)*)',   # // harden_strategy: tmr, ecc
+        'skip':     r'//\s*harden_skip\s*:\s*(\w+(?:\s*,\s*\w+)*)',        # // harden_skip: sig1, sig2
+        'module':   r'//\s*harden_module\s*:\s*(\w+)\s*->\s*(\w+)',        # // harden_module: mod_name -> tmr_state
+        'all':      r'//\s*harden_all\s*:\s*(\w+)',                        # // harden_all: tmr
+    }
+    
     def __init__(self, optimization_goal='area'):
         """
         Args:
@@ -128,6 +136,94 @@ class HardeningPipeline:
         self.aig_results = {}           # AIG分析结果
         self.llm_results = {}           # LLM生成结果
         self.use_parallel = True        # 是否启用并行处理
+        self.gen_keep_attrs = True      # 是否自动添加 keep 属性
+        self.gen_sdc = False            # 是否生成SDC综合约束文件
+        self.sdc_output_dir = None      # SDC文件输出目录
+        self.comment_constraints = {}   # 注释驱动的加固约束
+        self.use_comment_directives = True  # 是否启用注释指令
+        self._raw_content = ""          # 原始RTL内容
+    
+    def set_comment_directives(self, enabled: bool):
+        """开关注释约束功能
+        
+        Args:
+            enabled: True 启用注释指令解析, False 禁用
+        """
+        old = self.use_comment_directives
+        self.use_comment_directives = enabled
+        status = "启用" if enabled else "禁用"
+        print(f"[COMMENT] 注释约束功能已{status}")
+        if old != enabled:
+            print(f"[COMMENT]   模式切换: {'启用' if old else '禁用'} → {status}")
+    
+    def parse_harden_comments(self, rtl_content: str) -> dict:
+        """解析RTL代码中的注释驱动加固指令
+        
+        扫描RTL代码内容，提取 // harden_strategy, // harden_skip,
+        // harden_module, // harden_all 等注释指令。
+        
+        Args:
+            rtl_content: RTL代码字符串
+            
+        Returns:
+            dict: {
+                'strategy': [策略列表],      # 来自 harden_strategy
+                'skip': [信号名列表],         # 来自 harden_skip
+                'module': {模块名: 策略},     # 来自 harden_module
+                'all': 策略名                 # 来自 harden_all (若存在)
+            }
+            如果没有找到任何指令，返回空字典 {}
+        """
+        import re
+        
+        constraints = {}
+        
+        # 逐行扫描RTL代码
+        for line in rtl_content.splitlines():
+            # 跳过非注释行
+            stripped = line.strip()
+            if '//' not in stripped:
+                continue
+            
+            # 提取注释部分（行内注释或纯注释行）
+            comment_start = stripped.index('//')
+            comment_text = stripped[comment_start:]
+            
+            # 检查 harden_strategy 指令
+            m = re.match(self.COMMENT_DIRECTIVES['strategy'], comment_text)
+            if m:
+                strategies = [s.strip() for s in m.group(1).split(',')]
+                if 'strategy' not in constraints:
+                    constraints['strategy'] = []
+                constraints['strategy'].extend(strategies)
+                continue
+            
+            # 检查 harden_skip 指令
+            m = re.match(self.COMMENT_DIRECTIVES['skip'], comment_text)
+            if m:
+                signals = [s.strip() for s in m.group(1).split(',')]
+                if 'skip' not in constraints:
+                    constraints['skip'] = []
+                constraints['skip'].extend(signals)
+                continue
+            
+            # 检查 harden_module 指令
+            m = re.match(self.COMMENT_DIRECTIVES['module'], comment_text)
+            if m:
+                mod_name = m.group(1).strip()
+                strategy = m.group(2).strip()
+                if 'module' not in constraints:
+                    constraints['module'] = {}
+                constraints['module'][mod_name] = strategy
+                continue
+            
+            # 检查 harden_all 指令
+            m = re.match(self.COMMENT_DIRECTIVES['all'], comment_text)
+            if m:
+                constraints['all'] = m.group(1).strip()
+                continue
+        
+        return constraints
     
     def load_design(self, file_path: str) -> bool:
         """加载 RTL 设计文件"""
@@ -139,6 +235,10 @@ class HardeningPipeline:
         
         file_size = os.path.getsize(file_path)
         print(f"[LOAD] 加载设计文件: {os.path.basename(file_path)} ({file_size} bytes)")
+        
+        # 保存原始RTL内容供注释指令解析使用
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            self._raw_content = f.read()
         
         # 尝试用 pyverilog 解析
         try:
@@ -1556,6 +1656,121 @@ endmodule
 
         return stats
 
+    # ──────────────────────────────────────────────────
+    # 综合保护机制 (Synthesis Protection)
+    # ──────────────────────────────────────────────────
+    def _add_keep_attributes(self, hardened_code: str) -> str:
+        """在加固后代码中的所有 reg 声明前添加 keep 属性
+
+        - 普通 reg 添加 (* keep = "true" *)
+        - DICE 节点 (n1, n2, p1, p2) 添加 (* keep, preserve *)
+        - 已包含 keep 的属性块不重复添加
+        """
+        import re
+        dice_nodes = re.compile(r'\b(n[12]|p[12])\b')
+        lines = hardened_code.split('\n')
+        result = []
+
+        for line in lines:
+            stripped = line.strip()
+            is_reg = False
+            has_keep = False
+
+            # 检查是否已有属性块 (* ... *)
+            attr_m = re.match(r'\(\*\s*(.*?)\s*\*\)', stripped)
+            if attr_m:
+                # 属性块中已包含 keep，不重复添加
+                if 'keep' in attr_m.group(1):
+                    has_keep = True
+                # 属性块后的内容是否包含 reg 关键字
+                after_attr = stripped[attr_m.end():].strip()
+                if re.match(r'reg\b', after_attr):
+                    is_reg = True
+            elif re.match(r'reg\b', stripped):
+                is_reg = True
+
+            if is_reg and not has_keep:
+                indent = line[:len(line) - len(line.lstrip())]
+                # DICE 节点使用双属性
+                if dice_nodes.search(stripped):
+                    result.append(f'{indent}(* keep, preserve *)')
+                else:
+                    result.append(f'{indent}(* keep = "true" *)')
+
+            result.append(line)
+
+        return '\n'.join(result)
+
+    def _generate_sdc(self, design_name: str, output_dir: str) -> str:
+        """生成 Synopsys Design Constraints (.sdc) 和 Xilinx (.xdc) 文件
+
+        Args:
+            design_name: 设计名称
+            output_dir: 输出目录
+
+        Returns:
+            SDC 文件路径
+        """
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 生成 SDC 约束文件
+        sdc_content = (
+            f"# SDC constraints for hardened design: {design_name}\n"
+            f"# Generated by RTL Hardening Tool\n"
+            f"\n"
+            f"# Prevent synthesis from optimizing away redundant logic\n"
+            f"set_dont_touch [get_cells -hierarchical *Voter*]\n"
+            f"set_dont_touch [get_cells -hierarchical *dice*]\n"
+            f"\n"
+            f"# Keep hardened registers\n"
+            f"set_keep [get_registers *]\n"
+        )
+
+        sdc_file = os.path.join(output_dir, f"{design_name}_hardened.sdc")
+        with open(sdc_file, 'w', encoding='utf-8') as f:
+            f.write(sdc_content)
+        print(f"[SYNTH] SDC 约束文件生成: {sdc_file}")
+
+        # 生成 Xilinx XDC 格式约束文件
+        xdc_content = (
+            f"# XDC constraints for hardened design: {design_name}\n"
+            f"# Generated by RTL Hardening Tool\n"
+            f"\n"
+            f"# Prevent synthesis from optimizing away redundant logic\n"
+            f"set_property DONT_TOUCH TRUE [get_cells -hierarchical *Voter*]\n"
+            f"set_property DONT_TOUCH TRUE [get_cells -hierarchical *dice*]\n"
+            f"\n"
+            f"# Keep hardened registers\n"
+            f"set_property KEEP TRUE [get_registers *]\n"
+        )
+
+        xdc_file = os.path.join(output_dir, f"{design_name}_hardened.xdc")
+        with open(xdc_file, 'w', encoding='utf-8') as f:
+            f.write(xdc_content)
+        print(f"[SYNTH] XDC 约束文件生成: {xdc_file}")
+
+        return sdc_file
+
+    def enable_synthesis_protection(self, keep: bool = True, sdc: bool = False, output_dir: str = None):
+        """设置综合保护选项
+
+        Args:
+            keep: 是否自动添加 keep 属性到 reg 声明
+            sdc: 是否生成 SDC/XDC 综合约束文件
+            output_dir: SDC 文件输出目录，不指定时默认使用输出文件同目录
+        """
+        self.gen_keep_attrs = keep
+        self.gen_sdc = sdc
+        if output_dir:
+            self.sdc_output_dir = output_dir
+        elif sdc:
+            self.sdc_output_dir = None  # 默认使用输出文件同目录
+        status_keep = "启用" if keep else "禁用"
+        status_sdc = "启用" if sdc else "禁用"
+        print(f"[SYNTH] 综合保护设置: keep={status_keep}, SDC={status_sdc}")
+        if output_dir:
+            print(f"[SYNTH]   SDC 输出目录: {output_dir}")
+
     def output(self, output_file: str, format: str = 'verilog') -> str:
         """步骤 5: 输出加固后代码
         
@@ -1574,6 +1789,11 @@ endmodule
         
         print(f"[OUTPUT] 变换完成: 原始={len(content)}b → 加固={len(hardened_content)}b "
               f"(增速={len(hardened_content)/max(len(content),1):.1f}x)")
+        
+        # 综合保护：添加 keep 属性
+        if self.gen_keep_attrs:
+            hardened_content = self._add_keep_attributes(hardened_content)
+            print(f"[OUTPUT] 已添加 keep 属性到 reg 声明")
         
         # 生成加固后代码
         hardened = []
@@ -1617,6 +1837,12 @@ endmodule
         
         with open(meta_file, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2, ensure_ascii=False)
+        
+        # 综合保护：生成 SDC/XDC 约束文件
+        if self.gen_sdc:
+            design_name = os.path.splitext(os.path.basename(self.design_file))[0]
+            sdc_dir = self.sdc_output_dir if self.sdc_output_dir else output_dir
+            self._generate_sdc(design_name, sdc_dir)
         
         print(f"\n[OUTPUT] ✅ 加固完成:")
         print(f"[OUTPUT]   设计文件: {os.path.basename(self.design_file)}")
