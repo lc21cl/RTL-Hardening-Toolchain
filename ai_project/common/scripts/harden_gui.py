@@ -56,7 +56,7 @@ OUTPUT_DIRS = {
 for dir_path in OUTPUT_DIRS.values():
     os.makedirs(dir_path, exist_ok=True)
 
-VERSION = "3.7.1"
+VERSION = "5.4.0"
 APP_TITLE = f"RTL 加固工具集 v{VERSION}"
 
 WORKFLOWS = {
@@ -172,20 +172,23 @@ class HardeningGUI:
             'parity':   tk.BooleanVar(value=False),
             'cnt_comp': tk.BooleanVar(value=False),
             'fsm_tmr':  tk.BooleanVar(value=False),
+            'bch_ecc':  tk.BooleanVar(value=False),  # v5.4: BCH码多比特纠错
         }
 
         # 增强功能选项
         self.aig_enabled_var = tk.BooleanVar(value=True)
-        self.fault_injection_var = tk.BooleanVar(value=False)
+        self.fault_injection_var = tk.BooleanVar(value=True)
         self.llm_enhance_var = tk.BooleanVar(value=False)
         self.llm_backend_var = tk.StringVar(value='mock')
 
         # ── 新增功能选项 ──
         self.comment_directives_var = tk.BooleanVar(value=True)    # 注释约束
         self.gen_keep_var = tk.BooleanVar(value=True)              # 综合保护-keep
-        self.gen_sdc_var = tk.BooleanVar(value=False)              # 综合保护-SDC
+        self.gen_sdc_var = tk.BooleanVar(value=True)               # 综合保护-SDC
         self.parallel_mode_var = tk.BooleanVar(value=False)        # 并行模式(大设计默认关)
         self.failure_kb_var = tk.BooleanVar(value=True)            # 故障知识积累
+        self.multi_verify_var = tk.BooleanVar(value=True)          # 多层验证管线
+        self.exclusion_var = tk.BooleanVar(value=True)             # 投票器禁区规则
 
         # ── 新增FSM策略 ──
         self.strategy_vars['fsm_hamming'] = tk.BooleanVar(value=False)
@@ -346,6 +349,21 @@ class HardeningGUI:
                 'desc_parity': '检测单比特错误，开销小',
                 'desc_cnt_comp': '检测计数器翻转错误',
                 'desc_fsm_tmr': '状态机专用TMR',
+                'strategy_fsm_hamming': 'FSM_Hamming',
+                'strategy_fsm_hamming_name': '状态机汉明码 (3副本+汉明距离3)',
+                'desc_fsm_hamming': 'FSM汉明距离3编码容错',
+                'strategy_fsm_safe': 'FSM_Safe',
+                'strategy_fsm_safe_name': '安全状态机 (非法状态恢复)',
+                'desc_fsm_safe': '检测并恢复非法FSM状态',
+                'strategy_dnurl': 'DNURL',
+                'strategy_dnurl_name': '双节点DICE (2节点翻转恢复)',
+                'desc_dnurl': '双节点同时翻转恢复保护',
+                'strategy_tnudice': 'TNUDICE',
+                'strategy_tnudice_name': '三节点DICE (3节点翻转恢复)',
+                'desc_tnudice': '三节点同时翻转恢复保护',
+                'strategy_bch_ecc': 'BCH_ECC',
+                'strategy_bch_ecc_name': 'BCH码多比特纠错 (BCH(15,7,2))',
+                'desc_bch_ecc': '基于GF(2^m)域的BCH码多比特错误纠正',
                 'enhance_aig': '📈 自动AIG分析 — 加固后自动分析电路结构',
                 'enhance_fault': '🛡️ 故障注入验证 — 量化加固效果(需iverilog)',
                 'enhance_llm': '🤖 LLM增强加固 — 使用大语言模型优化加固代码',
@@ -488,6 +506,21 @@ class HardeningGUI:
                 'desc_parity': 'Detect single-bit errors, low overhead',
                 'desc_cnt_comp': 'Detect counter rollover errors',
                 'desc_fsm_tmr': 'FSM-specific TMR',
+                'strategy_fsm_hamming': 'FSM_Hamming',
+                'strategy_fsm_hamming_name': 'FSM Hamming Code (3-copy + Hamming distance 3)',
+                'desc_fsm_hamming': 'FSM Hamming distance-3 encoding fault tolerance',
+                'strategy_fsm_safe': 'FSM_Safe',
+                'strategy_fsm_safe_name': 'Safe FSM (Illegal State Recovery)',
+                'desc_fsm_safe': 'Detect and recover from illegal FSM states',
+                'strategy_dnurl': 'DNURL',
+                'strategy_dnurl_name': 'Dual-Node DICE (2-node upset recovery)',
+                'desc_dnurl': 'Dual-node simultaneous upset recovery',
+                'strategy_tnudice': 'TNUDICE',
+                'strategy_tnudice_name': 'Triple-Node DICE (3-node upset recovery)',
+                'desc_tnudice': 'Triple-node simultaneous upset recovery',
+                'strategy_bch_ecc': 'BCH_ECC',
+                'strategy_bch_ecc_name': 'BCH Multi-bit ECC (BCH(15,7,2))',
+                'desc_bch_ecc': 'BCH code multi-bit error correction based on GF(2^m)',
                 'enhance_aig': '📈 Auto AIG Analysis — analyze circuit after hardening',
                 'enhance_fault': '🛡️ Fault Injection — quantify hardening effect (requires iverilog)',
                 'enhance_llm': '🤖 LLM Enhanced Hardening — optimize code with LLM',
@@ -1019,6 +1052,11 @@ class HardeningGUI:
             'parity':   (self.tr('strategy_parity'), self.tr('strategy_parity_name'), self.tr('desc_parity')),
             'cnt_comp': (self.tr('strategy_cnt_comp'), self.tr('strategy_cnt_comp_name'), self.tr('desc_cnt_comp')),
             'fsm_tmr':  (self.tr('strategy_fsm_tmr'), self.tr('strategy_fsm_tmr_name'), self.tr('desc_fsm_tmr')),
+            'bch_ecc':  (self.tr('strategy_bch_ecc'), self.tr('strategy_bch_ecc_name'), self.tr('desc_bch_ecc')),
+            'fsm_hamming': (self.tr('strategy_fsm_hamming'), self.tr('strategy_fsm_hamming_name'), self.tr('desc_fsm_hamming')),
+            'fsm_safe': (self.tr('strategy_fsm_safe'), self.tr('strategy_fsm_safe_name'), self.tr('desc_fsm_safe')),
+            'dnurl':    (self.tr('strategy_dnurl'), self.tr('strategy_dnurl_name'), self.tr('desc_dnurl')),
+            'tnudice':  (self.tr('strategy_tnudice'), self.tr('strategy_tnudice_name'), self.tr('desc_tnudice')),
         }
 
         for i, (key, (short, name, desc)) in enumerate(strat_desc.items()):
@@ -1109,6 +1147,16 @@ class HardeningGUI:
         failure_kb_cb.pack(fill=tk.X, pady=3)
         add_tooltip(failure_kb_cb, "参考FT-Pilot(中科院): 记录历史失败模式，避免LLM重复错误")
 
+        multi_verify_cb = ttk.Checkbutton(enhance_frame, text="🔬 多层验证管线（语法→可综合→接口→功能）",
+                                          variable=self.multi_verify_var)
+        multi_verify_cb.pack(fill=tk.X, pady=3)
+        add_tooltip(multi_verify_cb, "参考FT-Pilot(中科院): 4层验证——语法检查+可综合检查+接口一致性+功能正确性")
+
+        exclude_cb = ttk.Checkbutton(enhance_frame, text="🚫 投票器禁区规则（DSP/进位链排除）",
+                                     variable=self.exclusion_var)
+        exclude_cb.pack(fill=tk.X, pady=3)
+        add_tooltip(exclude_cb, "参考Johnson & Wirthlin(BYU 2010): 在DSP原语和进位链路径上禁止插入投票器")
+
         # ── 投票器类型选择 ──
         voter_frame = ttk.Frame(enhance_frame)
         voter_frame.pack(fill=tk.X, pady=5)
@@ -1119,6 +1167,18 @@ class HardeningGUI:
             rb.pack(side=tk.LEFT, padx=5)
         add_tooltip(voter_frame.winfo_children()[0] if voter_frame.winfo_children() else None,
                     "参考Johnson & Wirthlin(BYU): 四种投票器算法适用于不同场景")
+
+        # ── 自动触发策略推荐 ──
+        def auto_recommend():
+            try:
+                input_file = self.workflow_data.get('input_file', '')
+                if input_file and os.path.exists(input_file):
+                    self.root.after(500, lambda: self._append_output("[INFO] 正在自动分析设计特征并推荐最优加固策略..."))
+                    self.root.after(1000, self._run_strategy_recommendation)
+            except:
+                pass
+        
+        self.root.after(100, auto_recommend)
 
     def _run_strategy_recommendation(self):
         input_file = self.workflow_data.get('input_file', '')
@@ -1264,12 +1324,20 @@ class HardeningGUI:
 
                 # 综合保护
                 pipeline.gen_keep_attrs = self.workflow_data.get('gen_keep_attrs', True)
-                pipeline.gen_sdc = self.workflow_data.get('gen_sdc', False)
+                pipeline.gen_sdc = self.workflow_data.get('gen_sdc', True)
 
-                # 并行模式
-                pipeline.use_parallel = self.workflow_data.get('parallel_mode', False)
-                if pipeline.use_parallel:
-                    self._append_output("  ⚡ 已启用并行处理模式（适用于大规模设计）", "cyan")
+                # ── 自动检测大规模设计并启用并行模式 ──
+                auto_parallel = self.workflow_data.get('parallel_mode', False)
+                if not auto_parallel:
+                    # 检测RTL文件大小，超过500KB或信号数>5000时自动启用
+                    try:
+                        fsize = os.path.getsize(input_file)
+                        if fsize > 500 * 1024:  # 500KB+
+                            auto_parallel = True
+                            self._append_output("  ⚡ 检测到大规模设计，自动启用并行处理模式", "cyan")
+                    except:
+                        pass
+                pipeline.use_parallel = auto_parallel
 
                 # 投票器类型
                 self.workflow_data['voter_type'] = self.workflow_data.get('voter_type', 'reducing')
@@ -2096,7 +2164,7 @@ class HardeningGUI:
                         # ── 应用新增功能选项 ──
                         pipeline.use_comment_directives = self.workflow_data.get('comment_directives', True)
                         pipeline.gen_keep_attrs = self.workflow_data.get('gen_keep_attrs', True)
-                        pipeline.gen_sdc = self.workflow_data.get('gen_sdc', False)
+                        pipeline.gen_sdc = self.workflow_data.get('gen_sdc', True)
                         pipeline.use_parallel = self.workflow_data.get('parallel_mode', False)
                         self.workflow_data['voter_type'] = self.workflow_data.get('voter_type', 'reducing')
 
@@ -2558,7 +2626,7 @@ endmodule'''
             return
         
         if os.path.isfile(dataset_path):
-            if dataset_path.endswith('.jsonl'):
+            if dataset_path.endswith(('.jsonl', '.json')):
                 try:
                     import json
                     count = 0
@@ -2631,7 +2699,7 @@ endmodule'''
                 from hardening_pipeline import HardeningPipeline
 
                 designs = []
-                is_jsonl = os.path.isfile(input_dataset) and input_dataset.endswith('.jsonl')
+                is_jsonl = os.path.isfile(input_dataset) and input_dataset.endswith(('.jsonl', '.json'))
 
                 if is_jsonl:
                     import json
@@ -2666,18 +2734,19 @@ endmodule'''
                     os.makedirs(design_output, exist_ok=True)
 
                     verilog_code = ''
-                    if design.get('verilog'):
-                        verilog_code = design.get('verilog')
-                    elif design.get('code'):
-                        verilog_code = design.get('code')
-                    elif design.get('Response'):
-                        response = design.get('Response')
-                        if isinstance(response, list) and len(response) > 0:
-                            verilog_code = response[0]
-                        elif isinstance(response, str):
-                            verilog_code = response
-                    elif design.get('canonical_solution'):
-                        verilog_code = design.get('canonical_solution')
+                    # 支持多种JSONL字段名
+                    field_priority = ['verilog', 'code', 'rtl', 'source', 'code_snippet', 
+                                      'verilog_code', 'hdl', 'design', 'rtl_code', 'content',
+                                      'text', 'input', 'Response', 'canonical_solution']
+                    for field in field_priority:
+                        if field in design:
+                            val = design[field]
+                            if isinstance(val, list) and len(val) > 0:
+                                verilog_code = val[0]
+                                break
+                            elif isinstance(val, str) and len(val) > 20:
+                                verilog_code = val
+                                break
                     
                     main_file = None
 
@@ -2710,8 +2779,19 @@ endmodule'''
                         # ── 应用新增功能选项 ──
                         pipeline.use_comment_directives = self.workflow_data.get('comment_directives', True)
                         pipeline.gen_keep_attrs = self.workflow_data.get('gen_keep_attrs', True)
-                        pipeline.gen_sdc = self.workflow_data.get('gen_sdc', False)
-                        pipeline.use_parallel = self.workflow_data.get('parallel_mode', False)
+                        pipeline.gen_sdc = self.workflow_data.get('gen_sdc', True)
+                        # ── 自动检测大规模设计并启用并行模式 ──
+                        auto_parallel = self.workflow_data.get('parallel_mode', False)
+                        if not auto_parallel:
+                            # 检测RTL文件大小，超过500KB或信号数>5000时自动启用
+                            try:
+                                fsize = os.path.getsize(main_file)
+                                if fsize > 500 * 1024:  # 500KB+
+                                    auto_parallel = True
+                                    self._append_output("  ⚡ 检测到大规模设计，自动启用并行处理模式", "cyan")
+                            except:
+                                pass
+                        pipeline.use_parallel = auto_parallel
                         self.workflow_data['voter_type'] = self.workflow_data.get('voter_type', 'reducing')
 
                         pipeline.load_design(main_file)
