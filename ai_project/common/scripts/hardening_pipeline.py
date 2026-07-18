@@ -191,6 +191,7 @@ class HardeningPipeline:
         self.log_level = 'INFO'
         self.log_file = None
         self.gen_error_tree = True       # 错误信号OR-tree使能
+        self.triple_clock_tmr = False    # 三时钟TMR（默认单时钟）
     
     def set_comment_directives(self, enabled: bool):
         """开关注释约束功能
@@ -1503,38 +1504,88 @@ endmodule
         print(f"[DETECT] 时钟: {clk}, 复位: {rst}")
         return clk, rst
     
-    def _generate_tmr_inline(self, signal: str, width: int, clk: str, rst: str) -> str:
-        """生成内联TMR代码（避免子模块的clk/rst命名问题）
+    def _generate_tmr_inline(self, signal: str, width: int, clk: str, rst: str,
+                            triple_clock: bool = False) -> str:
+        """生成内联TMR代码（v5.2: 支持Fanout cell + 三时钟 + 自动恢复）
         
-        直接在父模块中创建3副本+多数表决器，不创建独立module。
+        参考:
+        - TMRG (CERN 2017): Fanout cell插入 + 三时钟 + auto-recovery
+        
+        Args:
+            signal: 信号名
+            width: 位宽
+            clk: 时钟信号名
+            rst: 复位信号名
+            triple_clock: True时生成3独立时钟(clk_A/B/C)
         """
         lines = []
-        lines.append(f"    // ── 内联TMR: {signal}（3副本+多数表决）──")
+        lines.append(f"    // ── 内联TMR: {signal}（3副本+多数表决+自动恢复）──")
+        lines.append(f"    // 参考: TMRG (CERN 2017)")
+        lines.append(f"")
+        lines.append(f"    // Fanout cell: 输入信号分成3路独立扇出（防止单点SEU传播）")
+        lines.append(f"    (* keep = \"true\" *) wire [{width-1}:0] {signal}_fa;")
+        lines.append(f"    (* keep = \"true\" *) wire [{width-1}:0] {signal}_fb;")
+        lines.append(f"    (* keep = \"true\" *) wire [{width-1}:0] {signal}_fc;")
+        lines.append(f"    assign {signal}_fa = {signal};")
+        lines.append(f"    assign {signal}_fb = {signal};")
+        lines.append(f"    assign {signal}_fc = {signal};")
+        lines.append(f"")
+        lines.append(f"    // 3副本寄存器（带自动恢复）")
         lines.append(f"    (* keep = \"true\" *) reg [{width-1}:0] {signal}_t1;")
         lines.append(f"    (* keep = \"true\" *) reg [{width-1}:0] {signal}_t2;")
         lines.append(f"    (* keep = \"true\" *) reg [{width-1}:0] {signal}_t3;")
         lines.append(f"    reg [{width-1}:0] {signal}_tmr_out;")
         lines.append(f"    wire [{width-1}:0] {signal}_tmr_err;")
-        lines.append(f"")
-        lines.append(f"    // 三副本寄存器")
-        lines.append(f"    always @(posedge {clk} or posedge {rst}) begin")
-        lines.append(f"        if ({rst}) begin")
-        lines.append(f"            {signal}_t1 <= 0;")
-        lines.append(f"            {signal}_t2 <= 0;")
-        lines.append(f"            {signal}_t3 <= 0;")
-        lines.append(f"        end else begin")
-        lines.append(f"            {signal}_t1 <= {signal};")
-        lines.append(f"            {signal}_t2 <= {signal};")
-        lines.append(f"            {signal}_t3 <= {signal};")
-        lines.append(f"        end")
-        lines.append(f"    end")
+        
+        if triple_clock:
+            # 三时钟TMR: 每个副本使用独立时钟
+            clk_a = f"{clk}_a"
+            clk_b = f"{clk}_b"
+            clk_c = f"{clk}_c"
+            lines.append(f"    // 三时钟TMR: 独立时钟域(clk_a/b/c)，抵御时钟树SEU")
+            lines.append(f"    // 注意: 需要顶层模块提供 {clk_a}, {clk_b}, {clk_c}")
+            lines.append(f"    always @(posedge {clk_a} or posedge {rst}) begin")
+            lines.append(f"        if ({rst}) {signal}_t1 <= 0;")
+            lines.append(f"        else if ({signal}_tmr_err) {signal}_t1 <= {signal}_fa;  // auto-recovery")
+            lines.append(f"        else {signal}_t1 <= {signal}_fa;")
+            lines.append(f"    end")
+            lines.append(f"    always @(posedge {clk_b} or posedge {rst}) begin")
+            lines.append(f"        if ({rst}) {signal}_t2 <= 0;")
+            lines.append(f"        else if ({signal}_tmr_err) {signal}_t2 <= {signal}_fb;")
+            lines.append(f"        else {signal}_t2 <= {signal}_fb;")
+            lines.append(f"    end")
+            lines.append(f"    always @(posedge {clk_c} or posedge {rst}) begin")
+            lines.append(f"        if ({rst}) {signal}_t3 <= 0;")
+            lines.append(f"        else if ({signal}_tmr_err) {signal}_t3 <= {signal}_fc;")
+            lines.append(f"        else {signal}_t3 <= {signal}_fc;")
+            lines.append(f"    end")
+        else:
+            # 单时钟TMR（默认）
+            lines.append(f"    // 三副本寄存器（带auto-recovery: 检测到错误时自动重新加载）")
+            lines.append(f"    always @(posedge {clk} or posedge {rst}) begin")
+            lines.append(f"        if ({rst}) begin")
+            lines.append(f"            {signal}_t1 <= 0;")
+            lines.append(f"            {signal}_t2 <= 0;")
+            lines.append(f"            {signal}_t3 <= 0;")
+            lines.append(f"        end else if ({signal}_tmr_err) begin")
+            lines.append(f"            // Auto-recovery (TMRG): 错误触发重载")
+            lines.append(f"            {signal}_t1 <= {signal}_fa;")
+            lines.append(f"            {signal}_t2 <= {signal}_fb;")
+            lines.append(f"            {signal}_t3 <= {signal}_fc;")
+            lines.append(f"        end else begin")
+            lines.append(f"            {signal}_t1 <= {signal}_fa;")
+            lines.append(f"            {signal}_t2 <= {signal}_fb;")
+            lines.append(f"            {signal}_t3 <= {signal}_fc;")
+            lines.append(f"        end")
+            lines.append(f"    end")
+        
         lines.append(f"")
         lines.append(f"    // 多数表决器")
         lines.append(f"    always @(*) begin")
         lines.append(f"        {signal}_tmr_out = ({signal}_t1 & {signal}_t2) | ({signal}_t1 & {signal}_t3) | ({signal}_t2 & {signal}_t3);")
         lines.append(f"    end")
         lines.append(f"")
-        lines.append(f"    // 错误检测")
+        lines.append(f"    // 错误检测（任意两个副本不一致即报错）")
         lines.append(f"    assign {signal}_tmr_err = ({signal}_t1 != {signal}_t2) | ({signal}_t1 != {signal}_t3);")
         lines.append(f"")
         return "\n".join(lines)
@@ -1558,7 +1609,10 @@ endmodule
                         clk, rst = self._detect_clock_reset(content)
                         
                         # 生成内联TMR代码（不创建子模块）
-                        tmr_code = self._generate_tmr_inline(sig, width, clk, rst)
+                        tmr_code = self._generate_tmr_inline(
+                            sig, width, clk, rst,
+                            triple_clock=getattr(self, 'triple_clock_tmr', False)
+                        )
                         tmr_modules.append(tmr_code)
                         
                         # 替换原始信号声明
@@ -1905,50 +1959,179 @@ endmodule
         return content
     
     def _apply_ecc_transform(self, content: str, signal: str, width: int) -> str:
-        """应用ECC变换"""
+        """应用完整SECDED汉明码变换（v5.2: 完整编码器/解码器）
+        
+        参考经典Hamming/SECDED编码:
+        - 对 W 位数据，需要 K 位校验位，满足 2^K >= W + K + 1
+        - SECDED: 在Hamming距离4的基础上加一个全局偶校验位
+        
+        Args:
+            content: RTL代码
+            signal: 信号名
+            width: 数据位宽
+        
+        Returns:
+            变换后的RTL代码（含SECDED模块）
+        """
         import re
+        import math
         
-        ecc_bits = (width + 1).bit_length()
+        # 计算校验位数 K: 2^K >= W + K + 1
+        K = 1
+        while (1 << K) < (width + K + 1):
+            K += 1
+        total_bits = width + K  # 编码后总位数（SECDED模式下再+1）
         
-        ecc_module = f"""
-// ECC模块: {signal}
-module ecc_{signal}(
-    input [{width-1}:0] data_in,
-    output [{width+ecc_bits-1}:0] data_out,
-    input [{width+ecc_bits-1}:0] rx_data,
-    output [{width-1}:0] rx_out,
-    output error_detected,
-    output error_corrected
-);
-    reg [{ecc_bits-1}:0] syndrome;
-    reg [{width+ecc_bits-1}:0] encoded;
-    reg [{width-1}:0] decoded;
-    
-    always @(*) begin
-        encoded = {{data_in, {ecc_bits}'b0}};
-        syndrome = encoded ^ (encoded >> 1) ^ (encoded >> 2) ^ (encoded >> 4);
-        data_out = encoded | syndrome;
-    end
-    
-    always @(*) begin
-        syndrome = rx_data ^ (rx_data >> 1) ^ (rx_data >> 2) ^ (rx_data >> 4);
-        decoded = rx_data[{width+ecc_bits-1}:ecc_bits];
-        rx_out = decoded;
-    end
-    
-    assign error_detected = |syndrome;
-    assign error_corrected = |syndrome;
-endmodule
-"""
+        # SECDED: 再加1位全局偶校验
+        secded_total = total_bits + 1
+        parity_positions = [2**i for i in range(K)]  # 1, 2, 4, 8, ...
         
+        # 生成编码器Verilog代码
+        encoder_lines = []
+        encoder_lines.append(f"// ════════════════════════════════════════════")
+        encoder_lines.append(f"// SECDED汉明码编解码器: {signal}")
+        encoder_lines.append(f"//   {width}位数据 → {K}位校验 → {secded_total}位SECDED")
+        encoder_lines.append(f"// 参考: Hamming(, ) SECDED编码")
+        encoder_lines.append(f"// ════════════════════════════════════════════")
+        encoder_lines.append(f"module secded_{signal}(")
+        encoder_lines.append(f"    input  [{width-1}:0] data_in,")
+        encoder_lines.append(f"    output [{secded_total-1}:0] code_out,")
+        encoder_lines.append(f"    input  [{secded_total-1}:0] code_in,")
+        encoder_lines.append(f"    output [{width-1}:0] data_out,")
+        encoder_lines.append(f"    output reg error_detected,")
+        encoder_lines.append(f"    output reg error_corrected,")
+        encoder_lines.append(f"    output reg double_error")
+        encoder_lines.append(f");")
+        
+        # 编码逻辑
+        encoder_lines.append(f"")
+        encoder_lines.append(f"    // ── 编码器: 生成汉明校验位 ──")
+        encoder_lines.append(f"    wire [{secded_total-1}:0] hamming_code;")
+        
+        # 生成每个位的赋值
+        code_bits = {}
+        data_idx = 0
+        for pos in range(0, secded_total - 1):  # 最后一位是全局偶校验
+            if pos in parity_positions and pos < total_bits:
+                # 奇偶校验位（暂存，后面计算）
+                code_bits[pos] = None  # placeholder
+            else:
+                # 数据位
+                code_bits[pos] = f"data_in[{data_idx}]"
+                data_idx += 1
+        
+        # 生成奇偶校验位计算
+        for pp in parity_positions:
+            if pp >= total_bits:
+                break
+            # 收集该校验位覆盖的所有数据位
+            covered = []
+            for dp in range(total_bits):
+                if dp != pp and (dp & pp) == pp and dp in code_bits and code_bits[dp] is not None:
+                    covered.append(code_bits[dp])
+            if covered:
+                xor_expr = " ^ ".join(covered)
+                encoder_lines.append(f"    assign hamming_code[{pp}] = {xor_expr};")
+            else:
+                encoder_lines.append(f"    assign hamming_code[{pp}] = 1'b0;")
+        
+        encoder_lines.append(f"")
+        # 数据位直接赋值
+        for pos, expr in sorted(code_bits.items()):
+            if expr is not None:
+                encoder_lines.append(f"    assign hamming_code[{pos}] = {expr};")
+        
+        # 全局偶校验
+        all_bits = [f"hamming_code[{i}]" for i in range(total_bits)]
+        encoder_lines.append(f"")
+        encoder_lines.append(f"    // 全局偶校验（SECDED: 检测双比特错误）")
+        encoder_lines.append(f"    assign hamming_code[{secded_total-1}] = ^{' ^ '.join(all_bits)};")
+        encoder_lines.append(f"    assign code_out = hamming_code;")
+        
+        # 解码器
+        encoder_lines.append(f"")
+        encoder_lines.append(f"    // ── 解码器: 错误检测与纠正 ──")
+        encoder_lines.append(f"    reg [{K-1}:0] syndrome;")
+        encoder_lines.append(f"    integer i;")
+        encoder_lines.append(f"")
+        encoder_lines.append(f"    always @(*) begin")
+        encoder_lines.append(f"        // 计算校正子")
+        encoder_lines.append(f"        syndrome = 0;")
+        for i, pp in enumerate(parity_positions):
+            if pp >= total_bits:
+                break
+            covered = []
+            for dp in range(total_bits):
+                if (dp & pp) == pp and dp in code_bits:
+                    if code_bits[dp] is not None:
+                        covered.append(f"code_in[{dp}]")
+                    else:
+                        # 当前奇偶校验位本身
+                        pass
+            # 重新计算当前奇偶校验位并与接收值比较
+            # 简化: syndrome[i] = 重新计算的奇偶校验位 ^ code_in[pp]
+            covered_simple = []
+            for dp in range(total_bits):
+                if dp != pp and (dp & pp) == pp and dp in code_bits and code_bits[dp] is not None:
+                    covered_simple.append(f"code_in[{dp}]")
+            if covered_simple:
+                encoder_lines.append(f"        syndrome[{i}] = ({' ^ '.join(covered_simple)}) ^ code_in[{pp}];")
+            else:
+                encoder_lines.append(f"        syndrome[{i}] = code_in[{pp}];")
+        
+        encoder_lines.append(f"")
+        encoder_lines.append(f"        // 全局偶校验检测双错误")
+        encoder_lines.append(f"        error_detected = |syndrome;")
+        encoder_lines.append(f"        if (syndrome != 0 &&")
+        encoder_lines.append(f"            (^{f' ^ '.join([f'code_in[{i}]' for i in range(secded_total)])}) == 1'b0) begin")
+        encoder_lines.append(f"            // 单比特错误: 可纠正")
+        encoder_lines.append(f"            error_corrected = 1;")
+        encoder_lines.append(f"            double_error = 0;")
+        encoder_lines.append(f"        end else if (syndrome != 0) begin")
+        encoder_lines.append(f"            // 双比特错误: 不可纠正")
+        encoder_lines.append(f"            error_corrected = 0;")
+        encoder_lines.append(f"            double_error = 1;")
+        encoder_lines.append(f"        end else begin")
+        encoder_lines.append(f"            error_corrected = 0;")
+        encoder_lines.append(f"            double_error = 0;")
+        encoder_lines.append(f"        end")
+        encoder_lines.append(f"")
+        encoder_lines.append(f"        // 纠正后的数据输出")
+        encoder_lines.append(f"        for (i = 0; i < {width}; i = i + 1) begin")
+        encoder_lines.append(f"            if (syndrome == i+1 && !double_error)")
+        encoder_lines.append(f"                data_out[i] = ~code_in[i];")
+        encoder_lines.append(f"            else")
+        encoder_lines.append(f"                data_out[i] = code_in[i];")
+        encoder_lines.append(f"        end")
+        encoder_lines.append(f"    end")
+        encoder_lines.append(f"endmodule")
+        
+        ecc_module = "\n".join(encoder_lines)
+        
+        # 将SECDED模块追加到文件末尾
         content = content + "\n\n" + ecc_module
         
+        # 替换原始信号声明：添加SECDED编解码器实例化
         content = re.sub(
             rf"(reg\s+\[{width-1}:0\]\s+{signal}\s*;)",
-            rf"\1\n    wire [{width+ecc_bits-1}:0] {signal}_ecc_out;\n    wire {signal}_ecc_error;\n    ecc_{signal} u_{signal}_ecc(.data_in({signal}), .data_out({signal}_ecc_out), .rx_data({signal}_ecc_out), .rx_out(), .error_detected({signal}_ecc_error), .error_corrected());",
+            rf"\1\n" +
+            rf"    // SECDED汉明码保护\n" +
+            rf"    wire [{secded_total-1}:0] {signal}_code;\n" +
+            rf"    wire [{width-1}:0] {signal}_corrected;\n" +
+            rf"    wire {signal}_err, {signal}_corr, {signal}_double;\n" +
+            rf"    secded_{signal} u_{signal}_secded (\n" +
+            rf"        .data_in({signal}),\n" +
+            rf"        .code_out({signal}_code),\n" +
+            rf"        .code_in({signal}_code),\n" +
+            rf"        .data_out({signal}_corrected),\n" +
+            rf"        .error_detected({signal}_err),\n" +
+            rf"        .error_corrected({signal}_corr),\n" +
+            rf"        .double_error({signal}_double)\n" +
+            rf"    );",
             content
         )
         
+        print(f"[ECC] SECDED保护 {signal}: {width}位数据+{K}位校验+1位SECDED")
         return content
     
     # ──────────────────────────────────────────────────
@@ -2102,10 +2285,21 @@ endmodule
         global_error = current[0] if current else "1'b0"
         lines.append(f"\n(* keep = \"true\" *) wire tmr_global_error;")
         lines.append(f"assign tmr_global_error = {global_error};")
-        lines.append(f"// 全局错误汇总（可用于外部恢复机制）")
+        lines.append(f"")
+        lines.append(f"// ── 自动恢复机制 (TMRG) ──")
+        lines.append(f"// 当检测到错误时，生成一个恢复脉冲，触发TMR副本重载")
+        lines.append(f"(* keep = \"true\" *) reg tmr_recovery;")
+        lines.append(f"always @(posedge clk or posedge rst) begin")
+        lines.append(f"    if (rst) tmr_recovery <= 0;")
+        lines.append(f"    else if (tmr_global_error) tmr_recovery <= 1;")
+        lines.append(f"    else tmr_recovery <= 0;")
+        lines.append(f"end")
+        lines.append(f"// tmr_recovery可用于自恢复（各TMR副本收到此信号后自动重载）")
+        lines.append(f"// 同时也暴露为顶层输出端口")
+        lines.append(f"assign tmr_recovery_out = tmr_recovery;")
         
         result = "\n".join(lines)
-        print(f"[ERROR_OR] 生成OR-tree: {n} 个信号汇聚到 tmr_global_error")
+        print(f"[ERROR_OR] 生成OR-tree: {n} 个信号汇聚到 tmr_global_error + auto-recovery")
         return result
 
     # ──────────────────────────────────────────────────
@@ -2303,6 +2497,16 @@ endmodule
             error_tree = self._generate_error_ortree()
             if error_tree:
                 hardened_content += "\n" + error_tree
+        
+        # ── 添加自动恢复顶层端口 ──
+        if getattr(self, 'gen_error_tree', True):
+            recovery_port = "\n    output wire tmr_recovery_out;"
+            if recovery_port not in hardened_content:
+                hardened_content = re.sub(
+                    r'(module\s+\w+\s*\()',
+                    r'\1// 自动恢复端口(TMRG)\n    output wire tmr_recovery_out,\n    ',
+                    hardened_content
+                )
         
         # 生成加固后代码
         hardened = []

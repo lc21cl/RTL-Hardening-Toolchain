@@ -296,6 +296,156 @@ HARDENING_REVIEW_PROMPT = (
 )
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# CoT 语义信号分类（参考 FT-Pilot 2026）
+# ──────────────────────────────────────────────────────────────────────────────
+
+def cot_classify_signal(signal_name: str, rtl_context: str, llm=None) -> dict:
+    """CoT语义信号分类（参考FT-Pilot 2026）
+    
+    使用LLM通过Chain-of-Thought推理来分析信号的功能角色。
+    
+    Args:
+        signal_name: 信号名
+        rtl_context: RTL代码上下文（包含信号声明的always块附近代码）
+        llm: LLM引擎实例，None时使用内置规则分析
+        
+    Returns:
+        {
+            'signal': str,
+            'type': 'fsm' | 'counter' | 'control' | 'data_path' | 'memory' | 'bus',
+            'confidence': float,       # 0.0-1.0
+            'reasoning': str,          # CoT推理过程
+            'method': 'llm' | 'rule',
+            'vulnerability': float,    # 0.0-1.0 建议脆弱性评分
+        }
+    """
+    import re
+    
+    # 提取信号相关的上下文（always块 + 声明）
+    context_lines = []
+    for line in rtl_context.split('\n'):
+        if signal_name in line:
+            context_lines.append(line.strip())
+    
+    context_str = '\n'.join(context_lines[:15])  # 最多15行上下文
+    
+    # 如果提供了LLM，尝试CoT推理
+    if llm is not None:
+        cot_prompt = f"""你是一个RTL设计师，请分析以下Verilog寄存器的功能角色。
+
+【分析步骤】
+Step 1: 观察信号名和位宽
+Step 2: 检查赋值方式（是否有+1/-1模式 → 可能是计数器）
+Step 3: 检查是否是case表达式的一部分 → 可能是FSM状态寄存器
+Step 4: 检查是否用于配置/控制 → 可能是控制寄存器
+Step 5: 综合判断功能角色
+
+【信号信息】
+信号名: {signal_name}
+
+【RTL上下文】
+```verilog
+{context_str}
+```
+
+请按以下格式输出：
+信号类型: [fsm/counter/control/data_path/memory/bus]
+推理过程: [逐步推理]
+脆弱性评分: [0.0-1.0]"""
+        
+        try:
+            llm_response = llm.generate(cot_prompt)
+            
+            # 从LLM回复中提取信号类型
+            type_match = re.search(r'信号类型:\s*(\w+)', llm_response)
+            reasoning_match = re.search(r'推理过程:\s*(.+?)(?:脆弱性评分:|$)', llm_response, re.DOTALL)
+            vuln_match = re.search(r'脆弱性评分:\s*([0-9.]+)', llm_response)
+            
+            sig_type = type_match.group(1).lower() if type_match else 'data_path'
+            reasoning = reasoning_match.group(1).strip() if reasoning_match else ''
+            vulnerability = float(vuln_match.group(1)) if vuln_match else 0.5
+            
+            # 验证类型合法性
+            valid_types = ['fsm', 'counter', 'control', 'data_path', 'memory', 'bus']
+            if sig_type not in valid_types:
+                sig_type = 'data_path'
+            
+            return {
+                'signal': signal_name,
+                'type': sig_type,
+                'confidence': 0.85 if type_match else 0.5,
+                'reasoning': reasoning,
+                'method': 'llm',
+                'vulnerability': vulnerability,
+            }
+        except Exception as e:
+            print(f"[COT] LLM分析失败({signal_name}): {e}, 降级到规则分析")
+    
+    # 规则分析回退
+    sig_lower = signal_name.lower()
+    reasoning_steps = []
+    
+    # Step 1: 信号名分析
+    reasoning_steps.append(f"Step1: 信号名={signal_name}")
+    
+    # Step 2: 赋值模式
+    has_counter = bool(re.search(rf'{signal_name}\s*<=\s*{signal_name}\s*[+-]\s*1', rtl_context))
+    if has_counter:
+        reasoning_steps.append(f"Step2: 检测到+1/-1模式 → 计数器")
+    
+    # Step 3: FSM/case
+    is_fsm = bool(re.search(rf'\b{signal_name}\b.*case\s*\(', rtl_context, re.IGNORECASE))
+    if is_fsm:
+        reasoning_steps.append(f"Step3: case表达式使用该信号 → FSM")
+    
+    # Step 4: 类型关键词
+    if any(kw in sig_lower for kw in ['state', 'fsm']):
+        sig_type = 'fsm'
+        vulnerability = 0.85
+        reasoning_steps.append(f"Step4: 关键词'state/fsm'匹配 → FSM")
+    elif any(kw in sig_lower for kw in ['count', 'cnt', 'timer']):
+        sig_type = 'counter'
+        vulnerability = 0.6
+        reasoning_steps.append(f"Step4: 关键词'count/cnt/timer'匹配 → 计数器")
+    elif any(kw in sig_lower for kw in ['cfg', 'config', 'mode', 'ctrl', 'enable', 'status']):
+        sig_type = 'control'
+        vulnerability = 0.4
+        reasoning_steps.append(f"Step4: 关键词匹配 → 控制寄存器")
+    elif is_fsm:
+        sig_type = 'fsm'
+        vulnerability = 0.85
+    elif has_counter:
+        sig_type = 'counter'
+        vulnerability = 0.6
+    else:
+        # 默认
+        sig_type = 'data_path'
+        vulnerability = 0.3
+        reasoning_steps.append(f"Step4: 无特殊匹配 → data_path")
+    
+    # 位宽影响
+    width_m = re.search(rf'(?:input|output|inout)?\s*reg\s*(?:\[(\d+):(\d+)\])?\s*{signal_name}', rtl_context)
+    if width_m:
+        msb = int(width_m.group(1)) if width_m.group(1) else 0
+        lsb = int(width_m.group(2)) if width_m.group(2) else 0
+        width = msb - lsb + 1 if width_m.group(1) else 1
+        reasoning_steps.append(f"Step5: 位宽={width}")
+        if width > 32 and sig_type == 'data_path':
+            vulnerability = min(vulnerability + 0.1, 1.0)
+    
+    reasoning = ' → '.join(reasoning_steps)
+    
+    return {
+        'signal': signal_name,
+        'type': sig_type,
+        'confidence': 0.7,
+        'reasoning': reasoning,
+        'method': 'rule',
+        'vulnerability': vulnerability,
+    }
+
+
 # ============================================================================
 # LLM Backends
 # ============================================================================
@@ -409,6 +559,10 @@ class MockLLM:
 
         logger.print(f"  [MOCKLLM] Fallback: using default TMR template")
         return self._tmr_rtl(module_name, signal_width)
+
+    def classify_signal(self, signal_name: str, rtl_context: str) -> dict:
+        """使用MockLLM进行信号分类"""
+        return cot_classify_signal(signal_name, rtl_context, llm=self)
 
     # ──────────────────────────────────────────────────────────────────
     # Strategy detection
@@ -4107,3 +4261,43 @@ class FailureKnowledgeBase:
 # 如果直接运行此脚本，执行层次化提取测试
 if __name__ == "__main__":
     _test_hierarchical_extraction()
+
+    # ── CoT信号分类测试 ──
+    test_rtl = '''
+    module test(
+        input clk, input rst_n,
+        input [7:0] d, output reg [7:0] q
+    );
+        reg [3:0] state;
+        reg [7:0] counter;
+        reg [31:0] cfg_reg;
+        
+        always @(posedge clk or posedge rst_n) begin
+            if (!rst_n) state <= 0;
+            else case(state)
+                0: state <= d;
+                1: state <= d + 1;
+                default: state <= 0;
+            endcase
+        end
+        
+        always @(posedge clk) begin
+            counter <= counter + 1;
+        end
+    endmodule
+    '''
+    
+    # 测试规则分析
+    for sig in ['state', 'counter', 'cfg_reg', 'q']:
+        r = cot_classify_signal(sig, test_rtl)
+        print(f"  {sig:10s} → {r['type']:10s} (vuln={r['vulnerability']:.2f}, method={r['method']})")
+        assert r['type'] in ['fsm', 'counter', 'control', 'data_path'], f'Invalid type: {r["type"]}'
+    print("  CoT rule classification: OK")
+    
+    # 测试MockLLM路径
+    try:
+        mock = MockLLM()
+        r = mock.classify_signal('state', test_rtl)
+        print(f"  MockLLM: {r['signal']} → {r['type']} (confidence={r['confidence']})")
+    except Exception as e:
+        print(f"  MockLLM classify test: {e}")
