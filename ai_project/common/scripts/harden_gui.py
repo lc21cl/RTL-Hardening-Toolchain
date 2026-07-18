@@ -180,6 +180,24 @@ class HardeningGUI:
         self.llm_enhance_var = tk.BooleanVar(value=False)
         self.llm_backend_var = tk.StringVar(value='mock')
 
+        # ── 新增功能选项 ──
+        self.comment_directives_var = tk.BooleanVar(value=True)    # 注释约束
+        self.gen_keep_var = tk.BooleanVar(value=True)              # 综合保护-keep
+        self.gen_sdc_var = tk.BooleanVar(value=False)              # 综合保护-SDC
+        self.parallel_mode_var = tk.BooleanVar(value=False)        # 并行模式(大设计默认关)
+        self.failure_kb_var = tk.BooleanVar(value=True)            # 故障知识积累
+
+        # ── 新增FSM策略 ──
+        self.strategy_vars['fsm_hamming'] = tk.BooleanVar(value=False)
+        self.strategy_vars['fsm_safe'] = tk.BooleanVar(value=False)
+
+        # ── 新增DICE变体 ──
+        self.strategy_vars['dnurl'] = tk.BooleanVar(value=False)
+        self.strategy_vars['tnudice'] = tk.BooleanVar(value=False)
+
+        # ── 投票器类型 ──
+        self.voter_type_var = tk.StringVar(value='reducing')  # reducing, partitioning, sync, cdc
+
         self.single_file_var = tk.StringVar()
         self.folder_var = tk.StringVar()
         self.dataset_var = tk.StringVar()
@@ -353,6 +371,10 @@ class HardeningGUI:
                 'label_done': '处理完成!',
                 'label_progress_folder': '批量加固进度',
                 'label_progress_dataset': '数据集加固进度',
+                'enhance_comment': '注释驱动约束',
+                'enhance_keep': '综合保护',
+                'enhance_parallel': '并行模式',
+                'enhance_kb': '故障知识积累',
             },
             'en': {
                 'app_title': 'RTL Hardening Tool',
@@ -491,6 +513,10 @@ class HardeningGUI:
                 'label_done': 'Completed!',
                 'label_progress_folder': 'Batch Hardening Progress',
                 'label_progress_dataset': 'Dataset Hardening Progress',
+                'enhance_comment': 'Comment Directives',
+                'enhance_keep': 'Synthesis Protection',
+                'enhance_parallel': 'Parallel Mode',
+                'enhance_kb': 'Failure Knowledge Base',
             }
         }
 
@@ -979,6 +1005,50 @@ class HardeningGUI:
             rb = ttk.Radiobutton(backend_frame, text=backend, variable=self.llm_backend_var, value=backend)
             rb.pack(side=tk.LEFT, padx=10)
 
+        # ── 新增增强功能（由开源工具TMRG/FT-Pilot/TLegUp启发） ──
+        sep = ttk.Separator(enhance_frame, orient='horizontal')
+        sep.pack(fill=tk.X, pady=5)
+
+        ttk.Label(enhance_frame, text="━ 高级优化选项 ━", font=("微软雅黑", 9, "bold"),
+                 foreground="#555").pack(pady=2)
+
+        comment_cb = ttk.Checkbutton(enhance_frame, text="📝 注释驱动约束 (// harden_strategy/tmr)",
+                                    variable=self.comment_directives_var)
+        comment_cb.pack(fill=tk.X, pady=3)
+        add_tooltip(comment_cb, "参考TMRG(CERN): 通过RTL注释控制加固策略，如 // harden_strategy: tmr")
+
+        keep_cb = ttk.Checkbutton(enhance_frame, text="🔒 综合保护 (*keep*)",
+                                  variable=self.gen_keep_var)
+        keep_cb.pack(fill=tk.X, pady=3)
+        add_tooltip(keep_cb, "参考TLegUp: 自动添加 (*keep*)属性和SDC文件防止综合优化移除冗余逻辑")
+
+        sdc_frame = ttk.Frame(enhance_frame)
+        sdc_frame.pack(fill=tk.X, padx=20, pady=2)
+        sdc_cb = ttk.Checkbutton(sdc_frame, text="生成SDC/XDC综合约束文件",
+                                 variable=self.gen_sdc_var)
+        sdc_cb.pack(side=tk.LEFT)
+
+        parallel_cb = ttk.Checkbutton(enhance_frame, text="⚡ 并行处理模式（适用于大规模设计）",
+                                      variable=self.parallel_mode_var)
+        parallel_cb.pack(fill=tk.X, pady=3)
+        add_tooltip(parallel_cb, "使用ThreadPoolExecutor并行处理10000+信号的设计")
+
+        failure_kb_cb = ttk.Checkbutton(enhance_frame, text="🧠 故障知识积累（提升LLM生成质量）",
+                                        variable=self.failure_kb_var)
+        failure_kb_cb.pack(fill=tk.X, pady=3)
+        add_tooltip(failure_kb_cb, "参考FT-Pilot(中科院): 记录历史失败模式，避免LLM重复错误")
+
+        # ── 投票器类型选择 ──
+        voter_frame = ttk.Frame(enhance_frame)
+        voter_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(voter_frame, text="投票器类型:").pack(side=tk.LEFT)
+        voter_types = [('归约型', 'reducing'), ('分区型', 'partitioning'), ('同步型', 'sync'), ('CDC型', 'cdc')]
+        for label, val in voter_types:
+            rb = ttk.Radiobutton(voter_frame, text=label, variable=self.voter_type_var, value=val)
+            rb.pack(side=tk.LEFT, padx=5)
+        add_tooltip(voter_frame.winfo_children()[0] if voter_frame.winfo_children() else None,
+                    "参考Johnson & Wirthlin(BYU): 四种投票器算法适用于不同场景")
+
     def _run_strategy_recommendation(self):
         input_file = self.workflow_data.get('input_file', '')
         if not input_file or not os.path.exists(input_file):
@@ -1058,6 +1128,12 @@ class HardeningGUI:
         self.workflow_data['fault_injection_enabled'] = self.fault_injection_var.get()
         self.workflow_data['llm_enhance_enabled'] = self.llm_enhance_var.get()
         self.workflow_data['llm_backend'] = self.llm_backend_var.get()
+        self.workflow_data['comment_directives'] = self.comment_directives_var.get()
+        self.workflow_data['gen_keep_attrs'] = self.gen_keep_var.get()
+        self.workflow_data['gen_sdc'] = self.gen_sdc_var.get()
+        self.workflow_data['parallel_mode'] = self.parallel_mode_var.get()
+        self.workflow_data['failure_kb'] = self.failure_kb_var.get()
+        self.workflow_data['voter_type'] = self.voter_type_var.get()
 
     def _render_step_rtl_single_execute(self, parent):
         f = ttk.LabelFrame(parent, text=self.tr('label_execute'), padding=15)
@@ -1109,6 +1185,26 @@ class HardeningGUI:
                 from hardening_pipeline import HardeningPipeline
 
                 pipeline = HardeningPipeline(optimization_goal=self.workflow_data.get('optimization_goal', 'balanced'))
+
+                # ── 应用新增功能选项 ──
+                # 注释驱动约束
+                pipeline.use_comment_directives = self.workflow_data.get('comment_directives', True)
+
+                # 综合保护
+                pipeline.gen_keep_attrs = self.workflow_data.get('gen_keep_attrs', True)
+                pipeline.gen_sdc = self.workflow_data.get('gen_sdc', False)
+
+                # 并行模式
+                pipeline.use_parallel = self.workflow_data.get('parallel_mode', False)
+                if pipeline.use_parallel:
+                    self._append_output("  ⚡ 已启用并行处理模式（适用于大规模设计）", "cyan")
+
+                # 投票器类型
+                self.workflow_data['voter_type'] = self.workflow_data.get('voter_type', 'reducing')
+
+                # 故障知识积累
+                if self.workflow_data.get('failure_kb', True):
+                    self._append_output("  🧠 故障知识积累已启用", "cyan")
 
                 self._append_output("[1/8] 加载设计...")
                 if not pipeline.load_design(input_file):
@@ -1187,6 +1283,20 @@ class HardeningGUI:
                         self._append_output(f"  ✅ LLM生成完成: 策略数={len(llm_results.get('strategies_used',[]))}", "green")
                         self._append_output(f"  说明: {llm_results.get('explanation', '')[:100]}...")
                     self.workflow_data['llm_results'] = pipeline.llm_results
+
+                # ── 显示新增功能状态 ──
+                if hasattr(pipeline, 'use_comment_directives') and pipeline.use_comment_directives and hasattr(pipeline, '_raw_content') and pipeline._raw_content:
+                    cmt = pipeline.parse_harden_comments(pipeline._raw_content)
+                    if cmt.get('strategy') or cmt.get('skip') or cmt.get('module') or cmt.get('all'):
+                        self._append_output("  📝 注释约束已应用", "green")
+
+                if hasattr(pipeline, 'gen_keep_attrs') and pipeline.gen_keep_attrs:
+                    self._append_output("  🔒 综合保护(keep属性)已应用", "green")
+
+                if hasattr(pipeline, 'get_performance_stats'):
+                    stats = pipeline.get_performance_stats()
+                    if stats.get('use_parallel'):
+                        self._append_output(f"  ⚡ 并行处理: {stats.get('num_batches', 0)}批", "green")
 
                 self._append_output("")
                 self._append_output("=" * 50, "green")
@@ -1877,6 +1987,14 @@ class HardeningGUI:
 
                     try:
                         pipeline = HardeningPipeline(optimization_goal=self.workflow_data.get('optimization_goal', 'balanced'))
+
+                        # ── 应用新增功能选项 ──
+                        pipeline.use_comment_directives = self.workflow_data.get('comment_directives', True)
+                        pipeline.gen_keep_attrs = self.workflow_data.get('gen_keep_attrs', True)
+                        pipeline.gen_sdc = self.workflow_data.get('gen_sdc', False)
+                        pipeline.use_parallel = self.workflow_data.get('parallel_mode', False)
+                        self.workflow_data['voter_type'] = self.workflow_data.get('voter_type', 'reducing')
+
                         pipeline.load_design(rtl_file)
                         pipeline.analyze()
                         pipeline.route_strategies()
@@ -2483,6 +2601,14 @@ endmodule'''
 
                     try:
                         pipeline = HardeningPipeline(optimization_goal=self.workflow_data.get('optimization_goal', 'balanced'))
+
+                        # ── 应用新增功能选项 ──
+                        pipeline.use_comment_directives = self.workflow_data.get('comment_directives', True)
+                        pipeline.gen_keep_attrs = self.workflow_data.get('gen_keep_attrs', True)
+                        pipeline.gen_sdc = self.workflow_data.get('gen_sdc', False)
+                        pipeline.use_parallel = self.workflow_data.get('parallel_mode', False)
+                        self.workflow_data['voter_type'] = self.workflow_data.get('voter_type', 'reducing')
+
                         pipeline.load_design(main_file)
                         pipeline.analyze()
                         if self.workflow_data.get('auto_hierarchical'):

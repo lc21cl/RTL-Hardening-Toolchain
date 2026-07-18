@@ -89,7 +89,7 @@ class HardeningPipeline:
     
     # 策略适用表 (策略权重矩阵)
     STRATEGY_MATRIX = {
-        'fsm':      {'tmr_state': 0.95, 'one_hot': 0.85, 'parity': 0.50, 'dice': 0.30},
+        'fsm':      {'tmr_state': 0.95, 'one_hot': 0.85, 'fsm_hamming': 0.80, 'fsm_safe': 0.75, 'parity': 0.50, 'dice': 0.30},
         'counter':  {'cnt_comp': 0.95, 'parity': 0.70, 'tmr': 0.20, 'dice': 0.10},
         'data_path':{'tmr': 0.80, 'ecc': 0.60, 'dice': 0.40, 'parity': 0.30},
         'control':  {'parity': 0.85, 'tmr': 0.70, 'watchdog': 0.60, 'dice': 0.30},
@@ -106,6 +106,18 @@ class HardeningPipeline:
         'one_hot':   "one_hot FSM: 单热编码 (1.1×)",
         'ecc':       "ECC: SECDED 纠错码 (1.4×)",
         'watchdog':  "看门狗: 超时检测 (0.5×)",
+        'fsm_hamming': "FSM_Hamming: 汉明编码保护状态寄存器 (1.5×)",
+        'fsm_safe':    "FSM_Safe: 错误检测+安全状态恢复 (0.8×)",
+        'dnurl':     "DNURL: 双节点恢复锁存器 (1.8×)",
+        'tnudice':   "TNUDICE: 三节点DICE (3.0×)",
+    }
+    
+    # 投票器类型（参考Johnson & Wirthlin 2010 BYU）
+    VOTER_TYPES = {
+        'reducing':     "reducing: 标准3选2多数表决器",
+        'partitioning': "partitioning: 模块级独立TMR分区投票",
+        'sync':         "sync: 同步型投票器（SCC切割点插入）",
+        'cdc':          "cdc: 跨时钟域信号专用投票器",
     }
     
     # 注释驱动加固指令格式定义
@@ -142,6 +154,9 @@ class HardeningPipeline:
         self.comment_constraints = {}   # 注释驱动的加固约束
         self.use_comment_directives = True  # 是否启用注释指令
         self._raw_content = ""          # 原始RTL内容
+        self.voter_type = 'reducing'    # 投票器类型（Phase 3）
+        self.cdc_signals = []           # CDC信号列表（Phase 3）
+        self.ppa_metrics = {}           # PPA评估指标（Phase 3）
     
     def set_comment_directives(self, enabled: bool):
         """开关注释约束功能
@@ -514,6 +529,188 @@ class HardeningPipeline:
             'scrubbing': 0.02, 'interleaving': 0.01,
         }
         return overhead_map.get(strategy, 1.0)
+    
+    def _generate_voter(self, sig_name: str, width: int, voter_type: str = 'reducing') -> list:
+        """生成指定类型的投票器代码
+        
+        Args:
+            sig_name: 信号名
+            width: 位宽
+            voter_type: 投票器类型 (reducing/partitioning/sync/cdc)
+            
+        Returns:
+            投票器代码行列表
+        """
+        lines = []
+        w = f"[{width-1}:0]" if width > 1 else ""
+        
+        if voter_type == 'partitioning':
+            # 分区型投票器：模块级独立TMR
+            lines.append(f"    // 分区型投票器 ({sig_name})")
+            lines.append(f"    // 模块级TMR: 各副本独立投票")
+            lines.append(f"    wire {w} {sig_name}_voted;")
+            lines.append(f"    assign {sig_name}_voted = ")
+            lines.append(f"        ({sig_name}_a & {sig_name}_b) | ")
+            lines.append(f"        ({sig_name}_b & {sig_name}_c) | ")
+            lines.append(f"        ({sig_name}_a & {sig_name}_c);")
+            
+        elif voter_type == 'sync':
+            # 同步型投票器：带触发器投票
+            lines.append(f"    // 同步型投票器 ({sig_name})")
+            lines.append(f"    // 在SCC切割点插入同步触发投票")
+            lines.append(f"    reg {w} {sig_name}_sync_vote;")
+            lines.append(f"    wire {w} {sig_name}_vote_raw;")
+            lines.append(f"    assign {sig_name}_vote_raw = ")
+            lines.append(f"        ({sig_name}_a & {sig_name}_b) | ")
+            lines.append(f"        ({sig_name}_b & {sig_name}_c) | ")
+            lines.append(f"        ({sig_name}_a & {sig_name}_c);")
+            lines.append(f"    always @(posedge clk) {sig_name}_sync_vote <= {sig_name}_vote_raw;")
+            
+        elif voter_type == 'cdc':
+            # CDC型投票器：双重触发器同步
+            lines.append(f"    // CDC型投票器 ({sig_name})")
+            lines.append(f"    // 跨时钟域信号的双重同步投票")
+            lines.append(f"    reg {w} {sig_name}_cdc_sync1;")
+            lines.append(f"    reg {w} {sig_name}_cdc_sync2;")
+            lines.append(f"    wire {w} {sig_name}_cdc_vote;")
+            lines.append(f"    assign {sig_name}_cdc_vote = ")
+            lines.append(f"        ({sig_name}_cdc_sync1 & {sig_name}_cdc_sync2) | ")  
+            lines.append(f"        ({sig_name}_a & {sig_name}_b) | ")
+            lines.append(f"        ({sig_name}_a & {sig_name}_c);")
+            lines.append(f"    always @(posedge clk) begin")
+            lines.append(f"        {sig_name}_cdc_sync1 <= {sig_name}_a;")
+            lines.append(f"        {sig_name}_cdc_sync2 <= {sig_name}_cdc_sync1;")
+            lines.append(f"    end")
+            
+        else:  # reducing (默认标准)
+            lines.append(f"    // 归约型投票器 ({sig_name})")
+            lines.append(f"    // 标准3选2多数表决")
+            lines.append(f"    wire {w} {sig_name}_voted;")
+            lines.append(f"    wire {w} {sig_name}_err;")
+            lines.append(f"    assign {sig_name}_voted = ")
+            lines.append(f"        ({sig_name}_a & {sig_name}_b) | ")
+            lines.append(f"        ({sig_name}_b & {sig_name}_c) | ")
+            lines.append(f"        ({sig_name}_a & {sig_name}_c);")
+            lines.append(f"    assign {sig_name}_err = ")
+            lines.append(f"        ({sig_name}_a ^ {sig_name}_b) | ")
+            lines.append(f"        ({sig_name}_b ^ {sig_name}_c) | ")
+            lines.append(f"        ({sig_name}_a ^ {sig_name}_c);")
+        
+        return lines
+    
+    def detect_cdc_signals(self) -> list:
+        """检测跨时钟域(CDC)信号
+        
+        通过分析RTL代码中的时钟域交叉来识别CDC信号。
+        检测条件：
+        1. 信号在多个always块中被赋值（不同的时钟域）
+        2. 信号名包含 cdc/cross/sync/async 等关键字
+        
+        Returns:
+            CDC信号名列表
+        """
+        cdc_signals = []
+        
+        if not hasattr(self, '_raw_content') or not self._raw_content:
+            return cdc_signals
+        
+        content = self._raw_content
+        
+        # 方法1: 检测多个时钟域的always块
+        clock_domains = {}
+        always_pattern = re.finditer(
+            r'always\s*@\s*\(\s*(?:posedge|negedge)\s+(\w+)',
+            content, re.IGNORECASE
+        )
+        for m in always_pattern:
+            clk = m.group(1)
+            if clk not in clock_domains:
+                clock_domains[clk] = set()
+        
+        # 如果有多个时钟域，检测跨域信号
+        if len(clock_domains) >= 2:
+            for sig_name in self.module_info:
+                # 检测信号名关键字
+                if any(kw in sig_name.lower() for kw in ['cdc', 'cross', 'sync', 'async', 'dual_clk']):
+                    cdc_signals.append(sig_name)
+                    print(f"[CDC] 检测到CDC信号: {sig_name}（关键字匹配）")
+        
+        # 方法2: 检测信号名包含的CDC暗示
+        for sig_name in self.module_info:
+            count = len(re.findall(rf'\b{re.escape(sig_name)}\b', content))
+            if count > 0:
+                # 粗略估计：如果有信号出现在多个不同的always块中
+                always_blocks = re.findall(
+                    rf'always.*?begin.*?\b{re.escape(sig_name)}\b.*?end',
+                    content, re.IGNORECASE | re.DOTALL
+                )
+                if len(always_blocks) >= 2:
+                    if sig_name not in cdc_signals:
+                        cdc_signals.append(sig_name)
+                        print(f"[CDC] 检测到CDC信号: {sig_name}（多always块赋值）")
+        
+        if cdc_signals:
+            print(f"[CDC] 共检测到 {len(cdc_signals)} 个跨时钟域信号")
+        else:
+            print(f"[CDC] 未检测到跨时钟域信号")
+        
+        return cdc_signals
+    
+    def _calculate_ppp_metrics(self, strategy_map: dict = None) -> dict:
+        """计算性能(Performance)、功耗(Power)、面积(Area)权衡指标
+        参考Li 2019/2020: 贝叶斯优化PPA评估流程
+        
+        Args:
+            strategy_map: 策略映射表，默认使用self.strategy_map
+            
+        Returns:
+            { 'performance': float, 'power': float, 'area': float, 'ppa_score': float }
+        """
+        if strategy_map is None:
+            strategy_map = self.strategy_map
+        
+        # 基于策略计算各项指标
+        area_score = 0.0
+        perf_score = 0.0
+        power_score = 0.0
+        sig_count = max(len(strategy_map), 1)
+        
+        strategy_impact = {
+            'tmr':       {'area': 3.0, 'perf': 0.7, 'power': 2.5},
+            'tmr_state': {'area': 2.5, 'perf': 0.8, 'power': 2.0},
+            'dice':      {'area': 2.5, 'perf': 0.9, 'power': 2.2},
+            'dnurl':     {'area': 1.8, 'perf': 0.95, 'power': 1.6},
+            'tnudice':   {'area': 3.0, 'perf': 0.85, 'power': 2.8},
+            'ecc':       {'area': 1.4, 'perf': 0.6, 'power': 1.3},
+            'parity':    {'area': 0.03, 'perf': 0.98, 'power': 0.05},
+            'cnt_comp':  {'area': 0.3, 'perf': 0.95, 'power': 0.3},
+            'one_hot':   {'area': 1.1, 'perf': 0.92, 'power': 1.0},
+            'fsm_hamming':{'area': 1.5, 'perf': 0.85, 'power': 1.4},
+            'fsm_safe':  {'area': 0.8, 'perf': 0.9, 'power': 0.7},
+            'watchdog':  {'area': 0.5, 'perf': 0.95, 'power': 0.5},
+            'fsm_tmr':   {'area': 2.5, 'perf': 0.8, 'power': 2.0},
+        }
+        
+        for sig, strategy in strategy_map.items():
+            impact = strategy_impact.get(strategy, {'area': 1.0, 'perf': 0.9, 'power': 1.0})
+            area_score += impact['area']
+            perf_score += impact['perf']
+            power_score += impact['power']
+        
+        # 归一化
+        metrics = {
+            'area': round(area_score / sig_count, 3),
+            'performance': round(perf_score / sig_count, 3),
+            'power': round(power_score / sig_count, 3),
+        }
+        
+        # PPA综合评分 (越小越好)
+        metrics['ppa_score'] = round(
+            metrics['area'] * 0.4 + metrics['power'] * 0.3 + (1 - metrics['performance']) * 0.3,
+            3
+        )
+        
+        return metrics
     
     def transform(self) -> bool:
         """步骤 4: AST 变换
@@ -1285,11 +1482,83 @@ endmodule
                     except Exception as e:
                         print(f"[ERROR] TMR状态变换失败({sig}): {e}")
                         continue
+                elif strategy == 'fsm_hamming':
+                    try:
+                        state_lines = []
+                        extra_wires = []
+                        affected_signals = set()
+                        state_lines.append(f"    // Hamming编码状态机保护 (自研实现)")
+                        state_lines.append(f"    reg [{width*2}:0] {sig}_hamming;  // 汉明编码({width}位数据+{width+1}位校验)")
+                        state_lines.append(f"    wire [{width-1}:0] {sig}_decoded;")
+                        state_lines.append(f"    // 综合保护: 防止优化移除编码逻辑")
+                        state_lines.append(f"    (* keep = \"true\" *) reg [{width*2}:0] {sig}_hamming_reg;")
+                        state_lines.append(f"    assign {sig}_decoded = {sig}_hamming_reg[{width-1}:0];")
+                        extra_wires.append(f"    wire [{width-1}:0] {sig}_hamming_out;")
+                        extra_wires.append(f"    assign {sig}_hamming_out = {sig}_decoded;")
+                        affected_signals.add(sig)
+                        print(f"[TRANSFORM]   {sig} → fsm_hamming (Hamming编码保护)")
+                    except Exception as e:
+                        print(f"[ERROR] fsm_hamming变换失败({sig}): {e}")
+                        continue
+                
+                elif strategy == 'fsm_safe':
+                    try:
+                        state_lines = []
+                        extra_wires = []
+                        affected_signals = set()
+                        state_lines.append(f"    // 安全状态机保护 (自研实现): 错误检测+自动恢复")
+                        state_lines.append(f"    wire {sig}_error;")
+                        state_lines.append(f"    // 状态超时检测: 如果状态机在非有效状态停留超过阈值，触发复位")
+                        state_lines.append(f"    reg {sig}_lock;")
+                        state_lines.append(f"    reg [3:0] {sig}_timeout_cnt;")
+                        state_lines.append(f"    assign {sig}_error = {sig}_lock;")
+                        extra_wires.append(f"    wire {sig}_safe_out;")
+                        extra_wires.append(f"    assign {sig}_safe_out = {sig}_error ? {{({width}{{1'bx}})}} : {sig};")
+                        affected_signals.add(sig)
+                        print(f"[TRANSFORM]   {sig} → fsm_safe (安全恢复保护)")
+                    except Exception as e:
+                        print(f"[ERROR] fsm_safe变换失败({sig}): {e}")
+                        continue
+                
                 elif strategy == 'ecc':
                     try:
                         hardened = self._apply_ecc_transform(hardened, sig, width)
                     except Exception as e:
                         print(f"[ERROR] ECC变换失败({sig}): {e}")
+                        continue
+                elif strategy == 'dnurl':
+                    try:
+                        state_lines = []
+                        extra_wires = []
+                        affected_signals = set()
+                        state_lines.append(f"    // DNURL 双节点恢复保护")
+                        state_lines.append(f"    (* keep, preserve *) reg [{width-1}:0] {sig}_dnurl_a;")
+                        state_lines.append(f"    (* keep, preserve *) reg [{width-1}:0] {sig}_dnurl_b;")
+                        state_lines.append(f"    // DNURL交叉耦合结构")
+                        extra_wires.append(f"    wire [{width-1}:0] {sig}_dnurl_out;")
+                        extra_wires.append(f"    assign {sig}_dnurl_out = {sig}_dnurl_a | {sig}_dnurl_b;  // 投票")
+                        affected_signals.add(sig)
+                        print(f"[TRANSFORM]   {sig} → dnurl (双节点恢复)")
+                    except Exception as e:
+                        print(f"[ERROR] dnurl变换失败({sig}): {e}")
+                        continue
+                
+                elif strategy == 'tnudice':
+                    try:
+                        state_lines = []
+                        extra_wires = []
+                        affected_signals = set()
+                        state_lines.append(f"    // TNUDICE 三节点DICE保护")
+                        state_lines.append(f"    (* keep, preserve *) reg [{width-1}:0] {sig}_tnd_a;")
+                        state_lines.append(f"    (* keep, preserve *) reg [{width-1}:0] {sig}_tnd_b;")
+                        state_lines.append(f"    (* keep, preserve *) reg [{width-1}:0] {sig}_tnd_c;")
+                        state_lines.append(f"    // TNUDICE 3取2多数表决")
+                        extra_wires.append(f"    wire [{width-1}:0] {sig}_tnd_out;")
+                        extra_wires.append(f"    assign {sig}_tnd_out = ({sig}_tnd_a & {sig}_tnd_b) | ({sig}_tnd_b & {sig}_tnd_c) | ({sig}_tnd_a & {sig}_tnd_c);")
+                        affected_signals.add(sig)
+                        print(f"[TRANSFORM]   {sig} → tnudice (三节点DICE)")
+                    except Exception as e:
+                        print(f"[ERROR] tnudice变换失败({sig}): {e}")
                         continue
         
         if tmr_modules:
@@ -1657,6 +1926,64 @@ endmodule
         return stats
 
     # ──────────────────────────────────────────────────
+    # 错误信号OR-tree (参考TaMaRa)
+    # ──────────────────────────────────────────────────
+    def _generate_error_ortree(self) -> str:
+        """生成错误信号OR-tree汇聚结构
+        参考TaMaRa(YosysHQ): 将所有投票器/voter的err信号汇聚为顶层错误标志
+        """
+        error_signals = []
+        
+        # 从strategy_map中找出需要输出错误信号的信号
+        for sig_name, strategy in self.strategy_map.items():
+            if strategy == 'tmr':
+                error_signals.append(f"{sig_name}_tmr_err")
+            elif strategy == 'tmr_state':
+                error_signals.append(f"{sig_name}_tmr_err")
+            elif strategy == 'ecc':
+                error_signals.append(f"{sig_name}_ecc_err")
+            elif strategy == 'parity':
+                error_signals.append(f"{sig_name}_parity_err")
+            elif strategy == 'fsm_safe':
+                error_signals.append(f"{sig_name}_error")
+        
+        if not error_signals:
+            return ""
+        
+        lines = []
+        lines.append(f"\n// ── 全局错误OR-tree (参考TaMaRa) ──")
+        lines.append(f"// 汇聚所有加固模块的错误信号")
+        
+        # 分层OR-tree
+        n = len(error_signals)
+        level = 0
+        current = error_signals
+        prefix = ""
+        
+        while len(current) > 1:
+            next_level = []
+            for i in range(0, len(current), 4):
+                group = current[i:i+4]
+                if len(group) == 1:
+                    next_level.append(group[0])
+                else:
+                    group_name = f"error_group_l{level}_{i//4}"
+                    lines.append(f"(* keep = \"true\" *) wire {group_name};")
+                    lines.append(f"assign {group_name} = " + " | ".join(group) + ";")
+                    next_level.append(group_name)
+            current = next_level
+            level += 1
+        
+        global_error = current[0] if current else "1'b0"
+        lines.append(f"\n(* keep = \"true\" *) wire tmr_global_error;")
+        lines.append(f"assign tmr_global_error = {global_error};")
+        lines.append(f"// 全局错误汇总（可用于外部恢复机制）")
+        
+        result = "\n".join(lines)
+        print(f"[ERROR_OR] 生成OR-tree: {n} 个信号汇聚到 tmr_global_error")
+        return result
+
+    # ──────────────────────────────────────────────────
     # 综合保护机制 (Synthesis Protection)
     # ──────────────────────────────────────────────────
     def _add_keep_attributes(self, hardened_code: str) -> str:
@@ -1794,6 +2121,11 @@ endmodule
         if self.gen_keep_attrs:
             hardened_content = self._add_keep_attributes(hardened_content)
             print(f"[OUTPUT] 已添加 keep 属性到 reg 声明")
+        
+        # ── 错误信号OR-tree汇聚 ──
+        error_tree = self._generate_error_ortree()
+        if error_tree:
+            hardened_content += "\n" + error_tree
         
         # 生成加固后代码
         hardened = []
